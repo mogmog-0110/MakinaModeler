@@ -59,7 +59,12 @@ Makina 側は多数側に合わせた（`Fidelity::labelsAreGeometry`）。
 Grasp3D 側は**あえて直していない**：参照実装を治療と同時に動かすと、
 一致検証が何も測らなくなる。直すなら移植の検証が終わってから、単独の変更として。
 
-### 3.2 `CsgTess` / `CsgPreview` は未調査
+### 3.2 `CsgTess` / `CsgPreview` は移植済み
+
+`Bsp.hpp` / `Tessellate.hpp` / `TessellateScene.hpp` に移した。
+SDF との内外判定一致（156,932 サンプル）が Phase 5 の 1 本目になっている。
+
+### 3.3 `CsgPreview` は未調査
 
 CSG プレビューのメッシュ化。Makina は SDF を直接レイマーチするので移植対象ではないが、
 `CsgBsp` を第 2 実装として使うときに関係してくる可能性がある。
