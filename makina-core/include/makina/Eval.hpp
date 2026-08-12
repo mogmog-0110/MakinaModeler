@@ -1,0 +1,277 @@
+// CPU evaluator over the authoring tree: a port of Grasp3D's SceneSdf.java.
+//
+// This is the measurement and verification path, not the drawing path. The GPU walks a flattened
+// program instead; this one stays close enough to the Java original that the two can be compared
+// point by point, which is Phase 1's exit criterion.
+//
+// What callers may rely on, unchanged from the reference:
+//   - the sign is exact: negative inside, positive outside
+//   - the magnitude may be a conservative lower bound, because min/max CSG combination and a
+//     non-uniform Scale corrected by its smallest axis both err on the safe side
+//   - Plane is a half space (inside is y <= Y); Disc and Triangle have no thickness and therefore
+//     no interior, so their distance is never negative
+//   - an op with no geometry returns kEmpty
+//
+// Three behaviours here look odd until you check the original, and all three are deliberate:
+//   - a transform node is a *container*: it unions its children after applying its inverse
+//   - a primitive may also have children, and evaluates to min(its own surface, those children)
+//   - Intersection skips empty children rather than letting one collapse the result
+//
+// One behaviour is *not* the original's: a Label's children are geometry here. SceneSdf returns
+// empty for a Label and never descends, which no other part of Grasp3D does -- see Fidelity.hpp.
+// Pass kGrasp3D to get the reference's answer back.
+
+#pragma once
+
+#include "Fidelity.hpp"
+#include "Scene.hpp"
+#include "Sdf.hpp"
+
+#include <cmath>
+#include <cstdint>
+
+namespace makina {
+
+constexpr double kEmpty = MK_EMPTY;
+constexpr double kEmptyThreshold = MK_EMPTY_THRESHOLD;
+
+inline bool isEmpty(double d) {
+    return d >= kEmptyThreshold;
+}
+
+namespace detail {
+
+/// SceneSdf.nz: a zero scale factor would divide by zero, so it is nudged rather than rejected.
+inline double nz(double v) {
+    return v == 0.0 ? 1e-9 : v;
+}
+
+/// Distance correction for a transform: the smallest absolute axis factor of a Scale, 1 otherwise.
+///
+/// A non-uniform Scale cannot be undone by a single factor, so the reference takes the smallest
+/// one, which understates the distance. That is safe for sphere tracing but shortens the step, and
+/// it is why heavily non-uniform models march slower (PLAN.md R-13).
+inline double scaleFactorOf(const CsgNode& n) {
+    if (static_cast<Op>(n.op) != Op::Scale) {
+        return 1.0;
+    }
+    const double sx = std::fabs(nz(n.params[0]));
+    const double sy = std::fabs(nz(n.params[1]));
+    const double sz = std::fabs(nz(n.params[2]));
+    return sx < sy ? (sx < sz ? sx : sz) : (sy < sz ? sy : sz);
+}
+
+/// Applies the inverse of one transform node to p.
+inline void invApply(const CsgNode& n, const double p[3], double out[3]) {
+    switch (static_cast<Op>(n.op)) {
+        case Op::Translate:
+            out[0] = p[0] - n.params[0];
+            out[1] = p[1] - n.params[1];
+            out[2] = p[2] - n.params[2];
+            return;
+        case Op::Scale:
+            out[0] = p[0] / nz(n.params[0]);
+            out[1] = p[1] / nz(n.params[1]);
+            out[2] = p[2] / nz(n.params[2]);
+            return;
+        default:
+            break;
+    }
+
+    // Rotate: single axis, angle negated. Grasp3D has no Euler rotation node; stacking Rotate
+    // nodes is how a multi-axis rotation is expressed (CSG_NODE.md 4.2).
+    const double a = -n.params[0] * 3.14159265358979323846 / 180.0;
+    const double c = std::cos(a);
+    const double s = std::sin(a);
+
+    switch (n.flags & flags::kAxisMask) {
+        case flags::kAxisY:
+            out[0] = c * p[0] + s * p[2];
+            out[1] = p[1];
+            out[2] = -s * p[0] + c * p[2];
+            return;
+        case flags::kAxisZ:
+            out[0] = c * p[0] - s * p[1];
+            out[1] = s * p[0] + c * p[1];
+            out[2] = p[2];
+            return;
+        default:
+            out[0] = p[0];
+            out[1] = c * p[1] - s * p[2];
+            out[2] = s * p[1] + c * p[2];
+            return;
+    }
+}
+
+/// Surface distance of a primitive in its own local space. kEmpty for anything without geometry.
+inline double primSdf(const CsgNode& n, const double p[3]) {
+    const double x = p[0], y = p[1], z = p[2];
+    const float* q = n.params;
+
+    switch (static_cast<Op>(n.op)) {
+        case Op::Box:
+            return mkSdBox(x, y, z, q[0], q[1], q[2], q[3], q[4], q[5]);
+        case Op::Sphere:
+            return mkSdSphere(x, y, z, q[0]);
+        case Op::Cylinder:
+            // params order is capPoint, basePoint, radius (Op.hpp).
+            return mkSdCylinder(x, y, z, q[2], q[1], q[0]);
+        case Op::Cone:
+            return mkSdCone(x, y, z, q[0], q[1]);
+        case Op::Torus:
+            return mkSdTorus(x, y, z, q[0], q[1]);
+        case Op::Disc:
+            return mkSdDisc(x, y, z, q[0], q[1]);
+        case Op::Triangle:
+            return mkSdTriangle(x, y, z, q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8]);
+        case Op::Plane:
+            return mkSdPlane(y, q[0]);
+        default:
+            return kEmpty;  // Unsupported, and anything structural
+    }
+}
+
+double evalNode(const Scene& s, std::uint16_t index, const double p[3], double scale, Fidelity f);
+
+inline double unionChildren(const Scene& s, std::uint16_t index, const double p[3], double scale,
+                            Fidelity f) {
+    const CsgNode& n = s.nodes[index];
+    double d = kEmpty;
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        const double c = evalNode(s, static_cast<std::uint16_t>(n.firstChild + i), p, scale, f);
+        if (c < d) {
+            d = c;
+        }
+    }
+    return d;
+}
+
+/// d = max(first child, -min(the rest)). Labels do not count as the body.
+inline double evalDifference(const Scene& s, std::uint16_t index, const double p[3], double scale,
+                             Fidelity f) {
+    const CsgNode& n = s.nodes[index];
+    double base = kEmpty;
+    double cut = kEmpty;
+    bool haveBase = false;
+
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        const std::uint16_t child = static_cast<std::uint16_t>(n.firstChild + i);
+        if (static_cast<Op>(s.nodes[child].op) == Op::Label) {
+            continue;
+        }
+        const double d = evalNode(s, child, p, scale, f);
+        if (!haveBase) {
+            base = d;
+            haveBase = true;
+        } else if (d < cut) {
+            cut = d;
+        }
+    }
+
+    if (!haveBase) {
+        return kEmpty;
+    }
+    if (isEmpty(cut)) {
+        return base;
+    }
+    return base > -cut ? base : -cut;
+}
+
+inline double evalIntersection(const Scene& s, std::uint16_t index, const double p[3],
+                               double scale, Fidelity f) {
+    const CsgNode& n = s.nodes[index];
+    double d = -kEmpty;
+    bool any = false;
+
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        const std::uint16_t child = static_cast<std::uint16_t>(n.firstChild + i);
+        if (static_cast<Op>(s.nodes[child].op) == Op::Label) {
+            continue;
+        }
+        const double e = evalNode(s, child, p, scale, f);
+        // An empty child means "not present", not "excludes everything": letting it through would
+        // make one missing operand erase the whole intersection.
+        if (isEmpty(e)) {
+            continue;
+        }
+        any = true;
+        if (e > d) {
+            d = e;
+        }
+    }
+    return any ? d : kEmpty;
+}
+
+inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], double scale,
+                       Fidelity f) {
+    const CsgNode& n = s.nodes[index];
+    const Op op = static_cast<Op>(n.op);
+
+    if (!f.labelsAreGeometry && op == Op::Label) {
+        return kEmpty;
+    }
+
+    if (isTransform(op)) {
+        double q[3];
+        invApply(n, p, q);
+        return unionChildren(s, index, q, scale * scaleFactorOf(n), f);
+    }
+
+    if (op == Op::Difference) {
+        return evalDifference(s, index, p, scale, f);
+    }
+    if (op == Op::Intersection) {
+        return evalIntersection(s, index, p, scale, f);
+    }
+
+    // Merge, SceneRoot, Unsupported, and every primitive. A primitive with children contributes
+    // both its own surface and theirs.
+    double d = kEmpty;
+    if (isPrimitive(op)) {
+        const double pd = primSdf(n, p);
+        if (!isEmpty(pd)) {
+            d = pd * scale;
+        }
+    }
+    const double dc = unionChildren(s, index, p, scale, f);
+    return d < dc ? d : dc;
+}
+
+}  // namespace detail
+
+/// Signed distance from the world point wp to the subtree at index, ancestor transforms included.
+/// Returns kEmpty when the subtree contributes no geometry.
+inline double eval(const Scene& s, std::uint16_t index, const double wp[3], Fidelity f = {}) {
+    // Collect the ancestor chain, then apply the inverses root first: a transform closer to the
+    // root has to be undone before one closer to the node.
+    std::uint16_t chain[64];
+    int depth = 0;
+    for (std::uint16_t a = s.nodes[index].parent;
+         a != kNoParent && depth < 64;
+         a = s.nodes[a].parent) {
+        chain[depth++] = a;
+    }
+
+    double p[3] = {wp[0], wp[1], wp[2]};
+    double scale = 1.0;
+    for (int i = depth - 1; i >= 0; --i) {
+        const CsgNode& n = s.nodes[chain[i]];
+        if (isTransform(static_cast<Op>(n.op))) {
+            double q[3];
+            detail::invApply(n, p, q);
+            p[0] = q[0];
+            p[1] = q[1];
+            p[2] = q[2];
+            scale *= detail::scaleFactorOf(n);
+        }
+    }
+
+    return detail::evalNode(s, index, p, scale, f);
+}
+
+/// Convenience: evaluate the whole scene from its root.
+inline double eval(const Scene& s, const double wp[3], Fidelity f = {}) {
+    return s.nodes.count == 0 ? kEmpty : eval(s, 0, wp, f);
+}
+
+}  // namespace makina

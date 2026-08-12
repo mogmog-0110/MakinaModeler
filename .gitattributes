@@ -1,0 +1,7 @@
+# Batch files keep CRLF. cmd.exe tolerates LF for most things but not all of them, and the
+# failures are the confusing kind -- a label that is not found, a block that ends early -- so it is
+# not worth finding out which constructs are on which side of the line.
+*.bat text eol=crlf
+
+# Everything else is LF in the repository and normalised on checkout.
+* text=auto
