@@ -25,6 +25,10 @@ cbuffer Params : register(b0) {
     /// leaving them in would put a difference in every pixel that the comparison would then have
     /// to be loosened to forgive.
     uint   gPovMatch;
+    // Scalars, not an array. An array in a constant buffer puts every element on its own 16-byte
+    // boundary, so `uint pad[3]` is 48 bytes here and 12 on the CPU -- and everything declared
+    // after it reads from the wrong place, silently, with plausible values.
+    uint   gLightCount;   uint _cbPadA;  uint _cbPadB;  uint _cbPadC;
     // Selection highlight, as a world box. The viewport sets it; the offscreen renderer leaves
     // gSelValid at zero, so both use the same layout and the same generated shaders.
     float3 gSelMin;     float gSelValid;

@@ -6,6 +6,9 @@
 #define MAKINA_SCENE_SHADING_HLSL
 
 #include "scene_finish.hlsl"
+// After scene_finish, because the shadow march needs evalCsg and the light table needs somewhere
+// to sit that both this and the engine wrapper can reach.
+#include "scene_lights.hlsl"
 
 float3 calcNormal(float3 p, float h) {
     const float2 k = float2(1.0, -1.0);
@@ -86,7 +89,36 @@ float4 PSMain(VSOut i) : SV_Target {
     // The occlusion multiplies the light, not the material: POV has no ambient occlusion at all,
     // so folding it into the ambient term would be inventing a difference from the oracle in the
     // one place the two are supposed to be comparable.
-    float3 col = mkAmbientTerm(mat, ao) + mkFinish(mat, n, -gLightDir, -rd, float3(1, 1, 1)) * ao;
+    float3 col = mkAmbientTerm(mat, ao);
+    if (gLightCount == 0u) {
+        // No lights in the scene: the one the renderer has always used, unshadowed. Every scene
+        // rendered this way before lights were a thing the format carried, so keeping it means
+        // nothing that used to draw suddenly goes black.
+        col += mkFinish(mat, n, -gLightDir, -rd, float3(1, 1, 1)) * ao;
+    } else {
+        for (uint li = 0u; li < gLightCount; ++li) {
+            const MkLight lg = gLights[li];
+            float3 toLight;
+            float  reach;
+            if (lg.directional != 0u) {
+                toLight = normalize(-lg.position);
+                reach = gFarDist;
+            } else {
+                const float3 delta = lg.position - p;
+                reach = length(delta);
+                toLight = delta / max(reach, 1e-9);
+            }
+
+            float shade = 1.0;
+            if (lg.shadowless == 0u) {
+                shade = mkShadow(p, toLight, reach, lg.softness, hitEps);
+            }
+            if (shade <= 0.0) {
+                continue;
+            }
+            col += mkFinish(mat, n, toLight, -rd, lg.color * mkFalloff(lg, reach)) * shade * ao;
+        }
+    }
 
     if (gPovMatch == 0u) {
         // Edge lift, so a silhouette stays legible against the sky. Pure presentation -- POV has

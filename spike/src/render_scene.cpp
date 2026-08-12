@@ -69,6 +69,15 @@ inline std::string povMatchPreamble(const float light[3]) {
     return buf;
 }
 
+/// The same preamble for a scene that carries its own lights.
+///
+/// The lamps come from the scene rather than from here, so the two renderers cannot disagree about
+/// where they are -- which is the whole reason lights moved into the scene format.
+inline std::string povScenePreamble(const makina::Scene& s) {
+    return "global_settings{ assumed_gamma 1.0 }\nbackground{ color rgb<0,0,0> }\n" +
+           makina::detail::povLights(s);
+}
+
 // Must match cbuffer Params in scene_prelude.hlsl.
 struct alignas(256) FrameParams {
     float eye[3];       float tanHalfFov;
@@ -80,6 +89,7 @@ struct alignas(256) FrameParams {
     float center[3];    float sceneRadius;
     std::uint32_t programCount;  std::uint32_t materialCount;
     std::uint32_t pigmentCount;  std::uint32_t povMatch;
+    std::uint32_t lightCount;    std::uint32_t padA;  std::uint32_t padB;  std::uint32_t padC;
     // Only the interactive viewport highlights a selection; zero here means "nothing selected",
     // which is what every offscreen render wants.
     float selMin[3];    float selValid;
@@ -209,7 +219,7 @@ spike::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // descriptor table: it is one buffer bound once per draw, and a heap plus a descriptor would
     // be machinery around a single pointer. The generated-code path leaves t0 unbound, which is
     // legal because its shader never declares it.
-    D3D12_ROOT_PARAMETER param[4]{};
+    D3D12_ROOT_PARAMETER param[5]{};
     param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     param[0].Descriptor.ShaderRegister = 0;
     param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -221,13 +231,16 @@ spike::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     param[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[2].Descriptor.ShaderRegister = 1;
     param[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-    // t2 is the pigment table.
+    // t2 the pigments, t3 the lights.
     param[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[3].Descriptor.ShaderRegister = 2;
     param[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    param[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    param[4].Descriptor.ShaderRegister = 3;
+    param[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 4;
+    desc.NumParameters = 5;
     desc.pParameters = param;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -415,7 +428,9 @@ int main(int argc, char** argv) {
                     if (povMatch) {
                         float light[3];
                         lightDirection(light);
-                        po.preamble = povMatchPreamble(light);
+                        po.preamble = scene.lights.count > 0
+                                          ? povScenePreamble(scene)
+                                          : povMatchPreamble(light);
                     }
                     for (int k = 0; k < 3; ++k) {
                         po.camera.eye[k] = fp.eye[k];
@@ -468,6 +483,7 @@ int main(int argc, char** argv) {
                     params.materialCount = scene.materials.count;
                     params.pigmentCount = scene.pigments.count;
                     params.povMatch = povMatch ? 1u : 0u;
+                    params.lightCount = scene.lights.count;
                     if (povMatch) {
                         // POV has no ambient occlusion at all. Leaving it on would darken every
                         // crease on one side only.
@@ -505,6 +521,16 @@ int main(int argc, char** argv) {
                     spike::GpuBuffer pigmentBuffer = dev.createBufferWithData(
                         pigs.data(), pigs.size() * sizeof(makina::Pigment), L"pigments");
 
+                    std::vector<makina::Light> lights;
+                    for (std::uint32_t li = 0; li < scene.lights.count; ++li) {
+                        lights.push_back(scene.lights[li]);
+                    }
+                    if (lights.empty()) {
+                        lights.push_back(makina::Light{});
+                    }
+                    spike::GpuBuffer lightBuffer = dev.createBufferWithData(
+                        lights.data(), lights.size() * sizeof(makina::Light), L"lights");
+
                     dev.beginFrame();
                     dev.uploadBuffer(cb, sizeof(params),
                                      D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
@@ -515,6 +541,9 @@ int main(int argc, char** argv) {
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                     dev.uploadBuffer(pigmentBuffer, pigs.size() * sizeof(makina::Pigment),
+                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                    dev.uploadBuffer(lightBuffer, lights.size() * sizeof(makina::Light),
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                     dev.executeAndWait();
@@ -539,6 +568,8 @@ int main(int argc, char** argv) {
                             2, materialBuffer.resource->GetGPUVirtualAddress());
                         cl->SetGraphicsRootShaderResourceView(
                             3, pigmentBuffer.resource->GetGPUVirtualAddress());
+                        cl->SetGraphicsRootShaderResourceView(
+                            4, lightBuffer.resource->GetGPUVirtualAddress());
 
                         dev.writeTimestamp(0);
                         cl->DrawInstanced(3, 1, 0, 0);

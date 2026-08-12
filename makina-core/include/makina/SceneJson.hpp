@@ -197,6 +197,60 @@ inline nlohmann::ordered_json writePigment(const Pigment& p) {
                                   {"axis", vec3(p.axis)}};
 }
 
+/// Reads one light, defaulting what POV defaults.
+inline Light readLight(const nlohmann::json& j) {
+    Light l{};
+    l.directional = j.value("directional", false) ? 1u : 0u;
+    l.shadowless = j.value("shadowless", false) ? 1u : 0u;
+
+    const auto vec3 = [&j](const char* key, float (&dst)[3], float fx, float fy, float fz) {
+        if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
+            for (int c = 0; c < 3; ++c) {
+                dst[c] = j[key][c].get<float>();
+            }
+        } else {
+            dst[0] = fx;
+            dst[1] = fy;
+            dst[2] = fz;
+        }
+    };
+    vec3("position", l.position, 0.0f, 10.0f, 0.0f);
+    if (j.contains("color") && j["color"].is_array() && j["color"].size() == 3) {
+        for (int c = 0; c < 3; ++c) {
+            // 0-255 like every other color in this format.
+            l.color[c] = j["color"][c].get<float>() / 255.0f;
+        }
+    } else {
+        l.color[0] = l.color[1] = l.color[2] = 1.0f;
+    }
+
+    l.softness = j.value("softness", 0.0f);
+    l.fadeDistance = j.value("fadeDistance", 0.0f);
+    l.fadePower = j.value("fadePower", 0.0f);
+
+    if (l.directional != 0u) {
+        // A direction of zero length has no meaning and would divide by itself in the shader.
+        const float len = std::sqrt(l.position[0] * l.position[0] + l.position[1] * l.position[1] +
+                                    l.position[2] * l.position[2]);
+        if (len < 1e-6f) {
+            throw SceneJsonError("a directional light needs a direction; this one has none");
+        }
+    }
+    return l;
+}
+
+inline nlohmann::ordered_json writeLight(const Light& l) {
+    return nlohmann::ordered_json{
+        {"directional", l.directional != 0u},
+        {"shadowless", l.shadowless != 0u},
+        {"position", {l.position[0], l.position[1], l.position[2]}},
+        {"color", {int(l.color[0] * 255.0f + 0.5f), int(l.color[1] * 255.0f + 0.5f),
+                   int(l.color[2] * 255.0f + 0.5f)}},
+        {"softness", l.softness},
+        {"fadeDistance", l.fadeDistance},
+        {"fadePower", l.fadePower}};
+}
+
 inline void readRoot(Scene& s, const nlohmann::json& j) {
     if (Scene::kMaxNodes < 1) {
         throw SceneJsonError("scene capacity is zero");
@@ -312,6 +366,16 @@ inline Scene parseScene(const std::string& text) {
         }
     }
 
+    if (j.contains("lights") && j["lights"].is_array()) {
+        for (const auto& l : j["lights"]) {
+            if (s.lights.count >= Scene::kMaxLights) {
+                throw SceneJsonError("scene exceeds the " + std::to_string(Scene::kMaxLights) +
+                                     " light limit");
+            }
+            s.lights[s.lights.count++] = detail::readLight(l);
+        }
+    }
+
     if (!j.contains("root")) {
         throw SceneJsonError("scene has no \"root\"");
     }
@@ -356,6 +420,16 @@ inline std::string writeScene(const Scene& s, const std::string& sourceFile = {}
         }
     }
     j["materials"] = std::move(mats);
+
+    if (s.lights.count > 0) {
+        // Omitted entirely when there are none, so a file that never mentioned lighting round
+        // trips unchanged rather than gaining an empty array.
+        nlohmann::ordered_json lights = nlohmann::ordered_json::array();
+        for (std::uint32_t i = 0; i < s.lights.count; ++i) {
+            lights.push_back(detail::writeLight(s.lights[i]));
+        }
+        j["lights"] = std::move(lights);
+    }
 
     return j.dump(2) + "\n";
 }

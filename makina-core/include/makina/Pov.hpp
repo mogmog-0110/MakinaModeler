@@ -85,6 +85,43 @@ inline std::string silhouetteMaterial() {
     return "\tpigment{color rgb<1,1,1>}\n\tfinish{ambient 1 diffuse 0 specular 0}\n";
 }
 
+/// The scene's lights as POV blocks.
+///
+/// Directional is not something POV has, so it becomes a point light far enough away that the
+/// spread across a scene-sized object is well under a degree. POV applies no falloff unless asked,
+/// so the distance costs nothing in brightness.
+///
+/// Softness has no counterpart at all. POV needs an area_light and many samples for a penumbra,
+/// and its width would come from the light's physical size rather than from a factor -- so a soft
+/// light is exported as the hard one it is built on, and the comparison excludes such scenes
+/// rather than pretending the two agree.
+inline std::string povLights(const Scene& s) {
+    std::string out;
+    for (std::uint32_t i = 0; i < s.lights.count; ++i) {
+        const Light& l = s.lights[i];
+        double x = l.position[0], y = l.position[1], z = l.position[2];
+        if (l.directional != 0u) {
+            constexpr double kDistance = 1.0e4;
+            const double len = std::sqrt(x * x + y * y + z * z);
+            x = -x / len * kDistance;
+            y = -y / len * kDistance;
+            z = -z / len * kDistance;
+        }
+        out += "light_source{\n\t<" + num(x) + "," + num(y) + "," + num(z) + ">\n";
+        out += "\tcolor rgb<" + num(l.color[0]) + "," + num(l.color[1]) + "," + num(l.color[2]) +
+               ">\n";
+        if (l.shadowless != 0u) {
+            out += "\tshadowless\n";
+        }
+        if (l.fadePower > 0.0f && l.fadeDistance > 0.0f) {
+            out += "\tfade_distance " + num(l.fadeDistance) + "\n";
+            out += "\tfade_power " + num(l.fadePower) + "\n";
+        }
+        out += "}\n";
+    }
+    return out;
+}
+
 /// One pigment as a POV block.
 ///
 /// The order of the modifiers matters and is POV's: the pattern, then its color_map, then the

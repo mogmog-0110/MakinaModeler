@@ -88,6 +88,38 @@ struct Pigment {
 static_assert(sizeof(Pigment) == 64);
 static_assert(std::is_trivially_copyable_v<Pigment>);
 
+/// One light, in POV-Ray's terms.
+///
+/// The scene format did not carry lighting at all: every renderer made one up, and the POV export
+/// took its lamp from a caller-supplied preamble. That was fine while the only comparison was a
+/// silhouette. It stops being fine the moment the two renderers are asked to agree on colors,
+/// because then the lamp is part of the answer.
+///
+/// Directional is not a POV concept -- POV has point lights and nothing else -- so a directional
+/// light exports as a point light far enough away that the rays are parallel to within a pixel.
+/// Keeping the distinction here rather than only in the exporter means the shader can skip the
+/// per-pixel distance work for the common case.
+struct Light {
+    float position[3];   ///< where it is, or which way it points when directional
+    float _pad0;
+    float color[3];
+    /// How wide the penumbra is, as a fraction of the distance marched.
+    ///
+    /// Zero is a hard shadow, which is the only kind POV casts from a point light and therefore
+    /// the only kind the two renderers can be held to agreeing on. Anything above zero is this
+    /// renderer doing something a ray tracer needs an area light and many samples for.
+    float softness;
+    /// POV's fade_distance and fade_power. Zero power means no falloff, which is POV's default.
+    float fadeDistance;
+    float fadePower;
+    /// Whole words, not bytes. HLSL has no uint8, so a byte here is read as a uint there and every
+    /// field after it moves -- which is not a crash, it is a light that quietly stops casting.
+    std::uint32_t directional;   ///< 1 when `position` is a direction rather than a place
+    std::uint32_t shadowless;
+};
+static_assert(sizeof(Light) == 48);
+static_assert(std::is_trivially_copyable_v<Light>);
+
 /// A node's name, boxed so it can live in a counted collection the engine's reflection understands.
 template <std::size_t N>
 struct NameSlot {
@@ -105,6 +137,8 @@ struct SceneStorage {
     static constexpr std::size_t kNameLen = NameLen;
     /// One per material at most; a pigment belongs to exactly one.
     static constexpr std::size_t kMaxPigments = MaxMaterials;
+    /// Grasp3D's scene format has eight light slots, and no Grasp3D file uses more.
+    static constexpr std::size_t kMaxLights = 8;
 
     /// Monotonic. Never hands out an id twice, so a stale reference reads as dangling rather
     /// than as a different node (CSG_NODE.md 6.3).
@@ -115,6 +149,8 @@ struct SceneStorage {
     FixedArray<Material, MaxMaterials>     materials;
     /// Referenced by Material::textureId, which was already the slot for exactly this.
     FixedArray<Pigment, MaxMaterials>      pigments;
+    /// Empty means the renderer picks one, which is what every scene did before lights existed.
+    FixedArray<Light, kMaxLights>          lights;
     /// Indexed in step with nodes: entry i is the name of node i.
     FixedArray<NameSlot<NameLen>, MaxNodes> names;
 

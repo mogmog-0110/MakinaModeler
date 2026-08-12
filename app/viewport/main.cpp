@@ -52,7 +52,10 @@ struct alignas(256) FrameParams {
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
     std::uint32_t programCount;  std::uint32_t materialCount;
-    std::uint32_t pigmentCount;  std::uint32_t pad0;
+    std::uint32_t pigmentCount;  std::uint32_t povMatch;
+    // Scalars rather than an array: a constant-buffer array puts every element on its own 16-byte
+    // boundary in HLSL, so a uint[3] here would be 12 bytes and 48 there.
+    std::uint32_t lightCount;    std::uint32_t padA;  std::uint32_t padB;  std::uint32_t padC;
     float selMin[3];    float selValid;
     float selMax[3];    float pad1;
 };
@@ -123,7 +126,7 @@ app::ComPtr<ID3D12PipelineState> createPipeline(ID3D12Device* device, ID3D12Root
 app::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // b0 for the frame, t0 for the evaluation program -- the same signature the offscreen renderer
     // uses, so the generated shaders are interchangeable between them.
-    D3D12_ROOT_PARAMETER param[4]{};
+    D3D12_ROOT_PARAMETER param[5]{};
     param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     param[0].Descriptor.ShaderRegister = 0;
     param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -138,9 +141,12 @@ app::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     param[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[3].Descriptor.ShaderRegister = 2;
     param[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    param[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    param[4].Descriptor.ShaderRegister = 3;
+    param[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 4;
+    desc.NumParameters = 5;
     desc.pParameters = param;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -297,6 +303,9 @@ int main(int argc, char** argv) {
         std::unique_ptr<RingBuffer>      pigments;
         D3D12_GPU_VIRTUAL_ADDRESS        pigmentAddress = 0;
         std::uint32_t                    pigmentCount = 0;
+        std::unique_ptr<RingBuffer>      lights;
+        D3D12_GPU_VIRTUAL_ADDRESS        lightAddress = 0;
+        std::uint32_t                    lightCount = 0;
 
         auto rebuild = [&]() {
             prog = makina::flatten(history.current());
@@ -322,6 +331,18 @@ int main(int argc, char** argv) {
             const std::size_t pigmentBytes = pigs.size() * sizeof(makina::Pigment);
             pigments = std::make_unique<RingBuffer>(dev.device(), pigmentBytes);
             pigmentAddress = pigments->write(pigs.data(), pigmentBytes);
+
+            std::vector<makina::Light> lit;
+            for (std::uint32_t i = 0; i < history.current().lights.count; ++i) {
+                lit.push_back(history.current().lights[i]);
+            }
+            lightCount = history.current().lights.count;
+            if (lit.empty()) {
+                lit.push_back(makina::Light{});
+            }
+            const std::size_t lightBytes = lit.size() * sizeof(makina::Light);
+            lights = std::make_unique<RingBuffer>(dev.device(), lightBytes);
+            lightAddress = lights->write(lit.data(), lightBytes);
 
             sceneRadius = 1.0;
             if (bounds.box.valid) {
@@ -769,6 +790,7 @@ int main(int argc, char** argv) {
             // the end of what is actually bound.
             p.materialCount = materialCount;
             p.pigmentCount = pigmentCount;
+            p.lightCount = lightCount;
 
             float light[3] = {-0.45f, -0.78f, -0.44f};
             const float len =
@@ -813,6 +835,7 @@ int main(int argc, char** argv) {
             }
             cl->SetGraphicsRootShaderResourceView(2, materialAddress);
             cl->SetGraphicsRootShaderResourceView(3, pigmentAddress);
+            cl->SetGraphicsRootShaderResourceView(4, lightAddress);
             if (previewing || !prog.nodes.empty()) {
                 cl->DrawInstanced(3, 1, 0, 0);
             }
