@@ -25,7 +25,7 @@ if not exist "%EXE%" (
 if not exist "%OUT%" mkdir "%OUT%"
 REM Last run's saves are deleted first. A run that dies before writing would otherwise be compared
 REM against its own previous output, and every check would pass on a program that did nothing.
-del /q "%OUT%\*.json" >nul 2>&1
+del /q "%OUT%\*.json" "%OUT%\*.ppm" >nul 2>&1
 
 REM Node 4 is the Translate carrying the neck and shoulder, y = 3.0987 in the source scene.
 REM Node 15 is a Cylinder with no transform of its own, so moving it has to grow one.
@@ -62,6 +62,15 @@ call :absent  erase  13 "the deleted node must be gone from the tree"
 call :differs copy   "duplicate must add a subtree"
 call :same    undel  "undo after a delete must put the subtree back"
 
+REM The live preview draws the pending edit through the interpreted pipeline; committing swaps in
+REM a shader generated for the new tree. The two have to produce the same image, or the picture
+REM jumps the moment the user lets go. Byte comparison, because they really are the same picture:
+REM the interpreter and the generated shader agree exactly (spike\render_scene --interpret).
+echo    preview
+call :shot during 4 "W Y 3"
+call :shot after  4 "W Y 3 ENTER"
+call :samePic during after "the drag preview must match the committed picture"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -75,6 +84,34 @@ echo    %~1
 "%EXE%" "%SCENE%" --select %~2 --keys "%~3" --frames 40 --save "%OUT%\%~1.json" >"%OUT%\%~1.log" 2>&1
 if errorlevel 1 (
     echo       FAILED: the run did not finish - see %OUT%\%~1.log
+    set FAILED=1
+)
+exit /b 0
+
+REM Like :run, but keeps the frame instead of the tree.
+:shot
+"%EXE%" "%SCENE%" --select %~2 --keys "%~3" --frames 40 --screenshot "%OUT%\%~1.ppm" ^
+    >"%OUT%\%~1.log" 2>&1
+if errorlevel 1 (
+    echo       FAILED: the run did not finish - see %OUT%\%~1.log
+    set FAILED=1
+)
+exit /b 0
+
+:samePic
+if not exist "%OUT%\%~1.ppm" (
+    echo       FAILED [%~1]: no picture was written
+    set FAILED=1
+    exit /b 0
+)
+if not exist "%OUT%\%~2.ppm" (
+    echo       FAILED [%~2]: no picture was written
+    set FAILED=1
+    exit /b 0
+)
+fc /b "%OUT%\%~1.ppm" "%OUT%\%~2.ppm" >nul 2>&1
+if errorlevel 1 (
+    echo       FAILED [%~1]: %~3
     set FAILED=1
 )
 exit /b 0

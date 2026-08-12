@@ -90,6 +90,34 @@ std::string scratchDir() {
     return dir.string();
 }
 
+/// The one pipeline shape this viewport draws with: a full-screen triangle, no depth, no culling.
+///
+/// Shared by the generated pipeline and the interpreted one so that switching between them during
+/// a drag can only change the shader. If the two states drifted apart, the preview would differ
+/// from the committed picture for reasons that have nothing to do with the edit.
+app::ComPtr<ID3D12PipelineState> createPipeline(ID3D12Device* device, ID3D12RootSignature* rootSig,
+                                                const std::vector<char>& vs,
+                                                const std::vector<char>& ps) {
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+    pd.pRootSignature = rootSig;
+    pd.VS = {vs.data(), vs.size()};
+    pd.PS = {ps.data(), ps.size()};
+    pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    pd.DepthStencilState.DepthEnable = FALSE;
+    pd.SampleMask = UINT_MAX;
+    pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pd.NumRenderTargets = 1;
+    pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pd.SampleDesc.Count = 1;
+
+    app::ComPtr<ID3D12PipelineState> pso;
+    app::check(device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso)),
+               "CreateGraphicsPipelineState");
+    return pso;
+}
+
 app::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // b0 for the frame, t0 for the evaluation program -- the same signature the offscreen renderer
     // uses, so the generated shaders are interchangeable between them.
@@ -244,11 +272,9 @@ int main(int argc, char** argv) {
 
         // Everything that depends on the tree, rebuilt whenever the tree changes.
         //
-        // Generating and compiling costs 150-250 ms, which is what the modeller can afford and a
-        // game cannot (docs/SPIKE_PERF.md 9). It happens once per committed edit, not per frame:
-        // during a drag the number in the header is the feedback, and the picture catches up when
-        // the edit lands. A live preview would want the interpreted path instead -- same picture,
-        // no compile -- and that is the next thing worth doing here.
+        // Generating and compiling costs 150-250 ms, which is what the modeller can afford once
+        // per committed edit and a game cannot afford at all (docs/SPIKE_PERF.md 9). It is far too
+        // slow to do per frame, which is what the interpreted pipeline below is for.
         makina::EvalProgram             prog;
         makina::BoundsResult            bounds;
         double                          sceneRadius = 1.0;
@@ -289,35 +315,48 @@ int main(int argc, char** argv) {
             const std::vector<char> vs = readBinary(vsPath);
             const std::vector<char> ps = readBinary(psPath);
 
-            D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
-            pd.pRootSignature = rootSig.Get();
-            pd.VS = {vs.data(), vs.size()};
-            pd.PS = {ps.data(), ps.size()};
-            pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-            pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-            pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-            pd.DepthStencilState.DepthEnable = FALSE;
-            pd.SampleMask = UINT_MAX;
-            pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            pd.NumRenderTargets = 1;
-            pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-            pd.SampleDesc.Count = 1;
-
             // The pipeline and the buffer about to be replaced may still be referenced by a frame
             // in flight. Releasing those is a device removal, not an error message.
             dev.waitForGpu();
-            app::ComPtr<ID3D12PipelineState> next;
-            app::check(dev.device()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&next)),
-                       "CreateGraphicsPipelineState");
-            pso = next;
+            pso = createPipeline(dev.device(), rootSig.Get(), vs, ps);
 
             const std::size_t bytes = prog.nodes.size() * sizeof(makina::EvalNode);
             program = std::make_unique<RingBuffer>(dev.device(), bytes);
             programAddress = program->write(prog.nodes.data(), bytes);
         };
         rebuild();
-        std::printf("%u authoring nodes -> %zu program nodes\n\n",
+        std::printf("%u authoring nodes -> %zu program nodes\n",
                     history.current().nodes.count, prog.nodes.size());
+
+        // The preview pipeline: the same shading over an interpreted program instead of a
+        // generated one. It is built once, because it does not depend on the scene -- the tree
+        // travels in the buffer rather than in the source, which is exactly what makes it usable
+        // while the mouse is still moving.
+        //
+        // It is the slower of the two (5.6x at 25 nodes, 11.4x at 75, docs/SPIKE_PERF.md), and
+        // that is the right trade here: a frame that costs several times more still arrives this
+        // frame, and a shader compile does not arrive until the drag is over.
+        app::ComPtr<ID3D12PipelineState> interpretPso;
+        std::unique_ptr<RingBuffer>      previewProgram;
+        {
+            const std::string ipath = outDir + "/viewport.interp.hlsl";
+            const std::string ivs = outDir + "/viewport_interp_vs.cso";
+            const std::string ips = outDir + "/viewport_interp_ps.cso";
+            {
+                std::ofstream out(ipath, std::ios::binary);
+                out << spike::generateShader(prog, "scene_shading.hlsl", true);
+            }
+            spike::compileHlsl(dxc, ipath, "vs_6_0", "VSMain", ivs);
+            spike::compileHlsl(dxc, ipath, "ps_6_0", "PSMain", ips);
+            interpretPso =
+                createPipeline(dev.device(), rootSig.Get(), readBinary(ivs), readBinary(ips));
+
+            // Sized for the largest program the scene format allows, because the previewed tree
+            // can be bigger than the committed one: moving a node that has no transform grows one.
+            previewProgram = std::make_unique<RingBuffer>(
+                dev.device(), makina::Scene::kMaxNodes * sizeof(makina::EvalNode));
+        }
+        std::printf("\n");
 
         // The frame constants are the same size whatever the scene, so this one outlives a rebuild.
         RingBuffer constants(dev.device(), sizeof(FrameParams));
@@ -330,6 +369,13 @@ int main(int argc, char** argv) {
         std::uint32_t lastPickedId = 0;
         makina::TransformSession transform;
         std::string   lastStatus;
+        // The tree as the frame should show it, which during a drag is not the committed one.
+        // Everything the frame derives from the scene -- the program, the bounds, the ground, the
+        // selection box -- has to come from the same tree, or the picture jumps on commit for
+        // reasons the user did not ask for.
+        makina::Scene       previewScene;
+        makina::EvalProgram previewProg;
+        bool                previewing = false;
 
         std::printf("orbit / pan / dolly per the keymap. F fits the selection, A fits everything.\n");
         std::printf("Escape quits.\n\n");
@@ -359,10 +405,15 @@ int main(int argc, char** argv) {
             }
             const double aspect = in.aspect();
 
+            // A scripted run ignores the physical keyboard entirely. GetKeyState reports whichever
+            // modifiers are held anywhere on the machine, so a Shift held while the check happens
+            // to be running would stop CTRL+Y matching and the run would quietly not redo. That
+            // showed up once as a check that failed and then passed.
+            const bool live = scriptedKeys.empty();
             int modifiers = scriptedMods;
-            if (in.shift) modifiers |= makina::mods::kShift;
-            if (in.ctrl) modifiers |= makina::mods::kCtrl;
-            if (in.alt) modifiers |= makina::mods::kAlt;
+            if (live && in.shift) modifiers |= makina::mods::kShift;
+            if (live && in.ctrl) modifiers |= makina::mods::kCtrl;
+            if (live && in.alt) modifiers |= makina::mods::kAlt;
 
             // --- dragging ------------------------------------------------------------------
             if (in.dx != 0.0 || in.dy != 0.0) {
@@ -445,8 +496,9 @@ int main(int argc, char** argv) {
             // cancels a transform, and without this the same Escape would fall through to the key
             // loop and quit the application.
             const bool wasTransforming = transform.active();
+            previewing = false;
             if (transform.active()) {
-                transform.setSnap(in.ctrl);
+                transform.setSnap(live && in.ctrl);
                 if (in.dx != 0.0 || in.dy != 0.0) {
                     // One screen width is one unit for a move, ninety degrees for a rotate.
                     const double gain = transform.kind() == makina::TransformKind::Rotate ? 90.0
@@ -490,6 +542,24 @@ int main(int argc, char** argv) {
                     std::printf("  %s\n", status.c_str());
                     std::fflush(stdout);
                     lastStatus = status;
+                }
+
+                // The picture follows the number, every frame, through the interpreter. Applying
+                // the transform to a copy rather than to the history is what makes this free to
+                // throw away: a cancel has nothing to undo because nothing was ever committed.
+                if (!abandon && !finish) {
+                    const makina::EditResult p = makina::applyTransform(
+                        history.current(), selectedId, transform.kind(), transform.axis(),
+                        transform.value());
+                    if (p.ok) {
+                        previewScene = p.scene;
+                        previewProg = makina::flatten(previewScene);
+                        previewing = !previewProg.nodes.empty();
+                    } else {
+                        // A transform with no axis yet is refused, and that is not an error to
+                        // report once per frame -- the header already reads "Move:" with no axis.
+                        previewing = false;
+                    }
                 }
 
                 if (abandon) {
@@ -615,6 +685,23 @@ int main(int argc, char** argv) {
             }
 
             // --- draw ----------------------------------------------------------------------
+            // Everything below reads the tree through this, never through history directly.
+            const makina::Scene& shown = previewing ? previewScene : history.current();
+            const makina::BoundsResult shownBounds =
+                previewing ? makina::worldBounds(shown) : bounds;
+            double shownRadius = sceneRadius;
+            if (previewing && shownBounds.box.valid) {
+                double diag = 0.0;
+                for (int i = 0; i < 3; ++i) {
+                    const double span = shownBounds.box.hi[i] - shownBounds.box.lo[i];
+                    diag += span * span;
+                }
+                shownRadius = std::sqrt(diag) * 0.5;
+                if (shownRadius < 1e-6) {
+                    shownRadius = 1e-6;
+                }
+            }
+
             FrameParams p{};
             double eye[3], fwd[3], right[3], up[3];
             makina::cameraEye(camera, eye);
@@ -629,15 +716,17 @@ int main(int argc, char** argv) {
             }
             p.tanHalfFov = static_cast<float>(std::tan(camera.fovY * 3.14159265358979 / 360.0));
             p.aspect = static_cast<float>(aspect);
-            p.nodeCount = history.current().nodes.count;
+            p.nodeCount = shown.nodes.count;
             p.maxSteps = 192;
             p.stepScale = 0.85f;
-            p.farDist = static_cast<float>(camera.distance + sceneRadius * 2.5);
+            p.farDist = static_cast<float>(camera.distance + shownRadius * 2.5);
             p.enableAo = 1u;
-            p.sceneRadius = static_cast<float>(sceneRadius);
-            p.groundY = bounds.box.valid ? static_cast<float>(bounds.box.lo[1])
-                                         : static_cast<float>(-sceneRadius);
-            p.programCount = static_cast<std::uint32_t>(prog.nodes.size());
+            p.sceneRadius = static_cast<float>(shownRadius);
+            p.groundY = shownBounds.box.valid ? static_cast<float>(shownBounds.box.lo[1])
+                                              : static_cast<float>(-shownRadius);
+            // The interpreter reads this; the generated shader has the count built into its code.
+            p.programCount = static_cast<std::uint32_t>(
+                previewing ? previewProg.nodes.size() : prog.nodes.size());
 
             float light[3] = {-0.45f, -0.78f, -0.44f};
             const float len =
@@ -650,9 +739,11 @@ int main(int argc, char** argv) {
             // purpose: an exact one needs the shader to know which nodes belong to the selection,
             // and that is a change to the generated program rather than to a constant. Good
             // enough to answer "did my click land on what I meant", which is what step 4 is for.
-            const std::uint16_t selIndex = makina::indexOfId(history.current(), selectedId);
+            // Read from the previewed tree while a drag is running, so the box travels with what
+            // is being moved instead of staying where the object used to be.
+            const std::uint16_t selIndex = makina::indexOfId(shown, selectedId);
             if (selIndex != makina::kNoChild) {
-                const makina::BoundsResult sel = makina::worldBounds(history.current(), selIndex);
+                const makina::BoundsResult sel = makina::worldBounds(shown, selIndex);
                 if (sel.box.valid) {
                     for (int i = 0; i < 3; ++i) {
                         p.selMin[i] = static_cast<float>(sel.box.lo[i]);
@@ -668,11 +759,17 @@ int main(int argc, char** argv) {
             dev.begin(clear);
             ID3D12GraphicsCommandList* cl = dev.list();
             cl->SetGraphicsRootSignature(rootSig.Get());
-            cl->SetPipelineState(pso.Get());
+            cl->SetPipelineState(previewing ? interpretPso.Get() : pso.Get());
             cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             cl->SetGraphicsRootConstantBufferView(0, cbAddress);
-            cl->SetGraphicsRootShaderResourceView(1, programAddress);
-            if (!prog.nodes.empty()) {
+            if (previewing) {
+                const std::size_t bytes = previewProg.nodes.size() * sizeof(makina::EvalNode);
+                cl->SetGraphicsRootShaderResourceView(
+                    1, previewProgram->write(previewProg.nodes.data(), bytes));
+            } else {
+                cl->SetGraphicsRootShaderResourceView(1, programAddress);
+            }
+            if (previewing || !prog.nodes.empty()) {
                 cl->DrawInstanced(3, 1, 0, 0);
             }
             dev.end();
