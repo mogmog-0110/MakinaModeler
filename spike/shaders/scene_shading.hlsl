@@ -76,6 +76,22 @@ float4 PSMain(VSOut i) : SV_Target {
     float rim = pow(1.0 - saturate(dot(n, -rd)), 3.0);
     col += rim * 0.16;
 
+    // Selection: tint whatever is inside the selected subtree's world box.
+    //
+    // The box, not the surface. Marking the exact surface means the shader has to know which
+    // nodes belong to the selection, and that is a change to the generated program rather than to
+    // a constant. The box answers the question a click actually asks -- "did that land on what I
+    // meant" -- and for a subtree it is that subtree's own extent.
+    //
+    // gSelValid is zero for every offscreen render, so nothing else changes.
+    if (gSelValid > 0.5) {
+        float3 slack = float3(1.0, 1.0, 1.0) * (gSceneRadius * 1e-3);
+        bool inside = all(p >= gSelMin - slack) && all(p <= gSelMax + slack);
+        if (inside) {
+            col = lerp(col, float3(1.00, 0.62, 0.18), 0.35);
+        }
+    }
+
     return float4(pow(saturate(col), 1.0 / 2.2), 1.0);
 }
 

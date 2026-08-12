@@ -34,6 +34,10 @@ struct alignas(256) FrameParams {
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
     std::uint32_t programCount;  std::uint32_t pad[3];
+    // Only the interactive viewport highlights a selection; zero here means "nothing selected",
+    // which is what every offscreen render wants.
+    float selMin[3];    float selValid;
+    float selMax[3];    float pad2;
 };
 
 std::string readFile(const std::string& path) {

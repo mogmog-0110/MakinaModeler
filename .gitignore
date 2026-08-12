@@ -10,6 +10,7 @@ build/
 # Compiled shaders and the HLSL generated per scene. Reproduced by spike/build.bat.
 *.cso
 spike/build/
+app/build/
 
 # Baked assets. Reproduced by makina_bake at import time; the point of a bake is that it is
 # derived, and a committed one is a derived thing that can disagree with its source.
