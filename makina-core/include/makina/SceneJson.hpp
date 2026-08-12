@@ -127,7 +127,16 @@ inline void readRoot(Scene& s, const nlohmann::json& j) {
     fillNode(s, 0, j);
 }
 
-inline nlohmann::json writeNode(const Scene& s, std::uint16_t index) {
+/// Returns ordered_json, not json.
+///
+/// The whole node is built into an ordered_json and then handed back, so declaring the return type
+/// as plain json converted it and dropped the key order on the way out -- every node came back
+/// alphabetised, which is not what a file a person reads should look like.
+///
+/// GCC is what caught it: pushing a json into an ordered_json array is an ambiguous overload
+/// there, while MSVC picked one and carried on. The ambiguity was the symptom; the conversion was
+/// the bug.
+inline nlohmann::ordered_json writeNode(const Scene& s, std::uint16_t index) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
     const OpEntry* entry = findOp(op);
