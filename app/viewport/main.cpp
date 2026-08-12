@@ -272,6 +272,9 @@ int main(int argc, char** argv) {
                     sceneRadius = 1e-6;
                 }
             }
+            // Deleting the last solid is a legal thing to do. The generated shader has no form
+            // when there is nothing to generate it from, so the old pipeline is kept and the draw
+            // is skipped -- otherwise the frame would show the geometry that was just deleted.
             if (prog.nodes.empty()) {
                 return;
             }
@@ -533,6 +536,38 @@ int main(int argc, char** argv) {
                     }
                     continue;
                 }
+                if (action == "edit.delete" || action == "edit.duplicate") {
+                    if (selectedId == 0) {
+                        std::printf("nothing selected\n");
+                        continue;
+                    }
+                    const bool removing = action == "edit.delete";
+                    const makina::EditResult r =
+                        removing ? makina::removeSubtree(history.current(), selectedId)
+                                 : makina::duplicateSubtree(history.current(), selectedId);
+                    if (!r.ok) {
+                        std::printf("refused: %s\n", r.why.c_str());
+                        continue;
+                    }
+                    history.commit(r.scene, (removing ? "delete id " : "duplicate id ") +
+                                                std::to_string(selectedId));
+                    if (removing) {
+                        // The selection has to go with it. Leaving the id behind would let the
+                        // next W move something that is no longer in the tree, and the refusal
+                        // would name an id the user cannot see.
+                        std::printf("deleted id %u\n", selectedId);
+                        selectedId = 0;
+                        lastPickedId = 0;
+                        descendDepth = 0;
+                    } else {
+                        // The copy becomes the selection, so a duplicate-then-move reads as one
+                        // gesture rather than as moving the original by mistake.
+                        selectedId = r.newId;
+                        std::printf("duplicated as id %u\n", selectedId);
+                    }
+                    rebuild();
+                    continue;
+                }
                 if (action == "edit.undo") {
                     if (history.undo()) {
                         std::printf("undo\n");
@@ -637,7 +672,9 @@ int main(int argc, char** argv) {
             cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             cl->SetGraphicsRootConstantBufferView(0, cbAddress);
             cl->SetGraphicsRootShaderResourceView(1, programAddress);
-            cl->DrawInstanced(3, 1, 0, 0);
+            if (!prog.nodes.empty()) {
+                cl->DrawInstanced(3, 1, 0, 0);
+            }
             dev.end();
 
             if (frameLimit > 0 && ++frame >= frameLimit) {

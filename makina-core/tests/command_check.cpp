@@ -96,6 +96,20 @@ void exercise(const std::string& path) {
               "set by name wrote the wrong slot");
     }
 
+    // duplicate hands back the id of the copy, and it has to be a new one. Returning the
+    // original's id would make the very next command edit the wrong node, and the caller has no
+    // way to tell -- both are Cylinders with the same parameters.
+    const std::uint32_t beforeCopy = history.current().nodes.count;
+    r = makina::runCommand(history, json{{"op", "duplicate"}, {"id", pin}});
+    check(r.ok, "duplicate: " + r.message);
+    check(r.newId != pin, "duplicate handed back the original's id");
+    check(history.current().nodes.count == beforeCopy + 1, "duplicate: the copy is not there");
+    check(makina::indexOfId(history.current(), r.newId) != makina::kNoChild,
+          "duplicate: the id it returned is not in the tree");
+    r = makina::runCommand(history, json{{"op", "duplicate"}, {"id", rootId}});
+    check(!r.ok, "duplicating the root was accepted");
+    history.undo();
+
     // A batch stops at the first failure rather than applying the rest.
     const std::uint32_t beforeBatch = history.current().nodes.count;
     const auto batch = makina::runCommands(

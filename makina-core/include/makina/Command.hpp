@@ -184,6 +184,19 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         return r;
     }
 
+    if (op == "duplicate") {
+        const EditResult e = duplicateSubtree(s, cmd.value("id", 0u));
+        if (!e.ok) {
+            r.message = e.why;
+            return r;
+        }
+        history.commit(e.scene, "duplicate id " + std::to_string(cmd.value("id", 0u)));
+        r.ok = true;
+        r.newId = e.newId;
+        r.message = "duplicated as id " + std::to_string(e.newId);
+        return r;
+    }
+
     if (op == "move") {
         const std::uint16_t at = static_cast<std::uint16_t>(cmd.value("at", int(0xFFFF)));
         const EditResult e = reparent(s, cmd.value("id", 0u), cmd.value("parent", 0u), at);
@@ -255,8 +268,8 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         return r;
     }
 
-    r.message = "unknown command '" + op + "'; expected one of add, remove, move, set, rename, "
-                "material, undo, redo";
+    r.message = "unknown command '" + op + "'; expected one of add, remove, duplicate, move, set, "
+                "rename, material, undo, redo";
     return r;
 }
 

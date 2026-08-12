@@ -42,6 +42,9 @@ call :run cancel 4  "W Y 3 ESCAPE"
 call :run undo   4  "W Y 3 ENTER CTRL+Z"
 call :run redo   4  "W Y 3 ENTER CTRL+Z CTRL+Y"
 call :run wrap   15 "W X 2 ENTER"
+call :run erase  13 "DELETE"
+call :run copy   13 "CTRL+D"
+call :run undel  13 "DELETE CTRL+Z"
 
 call :differs move   "a committed move must change the tree"
 call :same    cancel "Escape must leave the tree untouched"
@@ -53,6 +56,11 @@ call :differs wrap   "moving an untransformed node must change the tree"
 REM The dot stands in for the quote: a findstr pattern in a .bat cannot carry one. Neither string
 REM appears in the baseline, so a match here is the edit and nothing else.
 call :matches wrap   "x.: 2.0"  "the new node must carry the typed X"
+
+call :differs erase  "delete must remove the subtree"
+call :absent  erase  13 "the deleted node must be gone from the tree"
+call :differs copy   "duplicate must add a subtree"
+call :same    undel  "undo after a delete must put the subtree back"
 
 echo.
 if "%FAILED%"=="0" (
@@ -117,6 +125,21 @@ exit /b 0
 :matches
 findstr /R /C:"%~2" "%OUT%\%~1.json" >nul 2>&1
 if errorlevel 1 (
+    echo       FAILED [%~1]: %~3
+    set FAILED=1
+)
+exit /b 0
+
+REM No node in the saved tree carries this id any more. The comma is part of the pattern because
+REM "id": 13 would otherwise also match "id": 130.
+:absent
+if not exist "%OUT%\%~1.json" (
+    echo       FAILED [%~1]: nothing was saved
+    set FAILED=1
+    exit /b 0
+)
+findstr /R /C:"id.: %~2," "%OUT%\%~1.json" >nul 2>&1
+if not errorlevel 1 (
     echo       FAILED [%~1]: %~3
     set FAILED=1
 )

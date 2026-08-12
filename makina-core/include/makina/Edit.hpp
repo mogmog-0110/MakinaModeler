@@ -279,6 +279,74 @@ inline EditResult removeSubtree(const Scene& s, std::uint32_t id) {
     return detail::rebuild(s, plan);
 }
 
+namespace detail {
+
+/// Gives every node in the subtree at `index` a fresh id, in pre-order.
+///
+/// A duplicated subtree arrives carrying the originals' ids, and two nodes answering to the same
+/// id is worse than a wrong tree: every edit here addresses nodes by id, so the second copy would
+/// be unreachable and every command aimed at it would silently hit the first.
+inline void renumber(Scene& s, std::uint16_t index) {
+    s.nodes[index].id = s.nextId++;
+    const std::uint16_t first = s.nodes[index].firstChild;
+    const std::uint16_t count = s.nodes[index].childCount;
+    for (std::uint16_t i = 0; i < count; ++i) {
+        renumber(s, static_cast<std::uint16_t>(first + i));
+    }
+}
+
+}  // namespace detail
+
+/// Copies the node with id `id` and everything under it, as the next sibling of the original.
+///
+/// Next sibling rather than appended: under a Difference the sibling order is the geometry, and an
+/// appended copy would become another cutter instead of another copy of what was selected.
+///
+/// The copy keeps the original's name. Which suffix a duplicate should get is a question about the
+/// outliner, and `rename` already answers it for whoever decides.
+inline EditResult duplicateSubtree(const Scene& s, std::uint32_t id) {
+    EditResult bad;
+    bad.scene = s;
+
+    const std::uint16_t index = indexOfId(s, id);
+    if (index == kNoChild) {
+        bad.why = "no node with id " + std::to_string(id);
+        return bad;
+    }
+    if (index == 0) {
+        bad.why = "the root cannot be duplicated";
+        return bad;
+    }
+
+    const std::uint16_t parentIndex = s.nodes[index].parent;
+    const std::uint32_t parentId = s.nodes[parentIndex].id;
+    std::uint16_t position = 0;
+    for (std::uint16_t i = 0; i < s.nodes[parentIndex].childCount; ++i) {
+        if (static_cast<std::uint16_t>(s.nodes[parentIndex].firstChild + i) == index) {
+            position = i;
+            break;
+        }
+    }
+
+    detail::RebuildPlan plan;
+    plan.insertUnder = parentIndex;
+    plan.insertAt = static_cast<std::uint16_t>(position + 1);
+    plan.moveFrom = &s;
+    plan.moveRoot = index;
+
+    EditResult r = detail::rebuild(s, plan);
+    if (!r.ok) {
+        return r;
+    }
+
+    const std::uint16_t newParent = indexOfId(r.scene, parentId);
+    const std::uint16_t copy =
+        static_cast<std::uint16_t>(r.scene.nodes[newParent].firstChild + position + 1);
+    detail::renumber(r.scene, copy);
+    r.newId = r.scene.nodes[copy].id;
+    return r;
+}
+
 /// Moves the node with id `id` under `newParentId`.
 ///
 /// Refuses to move a node under its own descendant. That would cut the pair loose from the root

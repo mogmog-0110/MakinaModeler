@@ -50,6 +50,15 @@ std::string readFile(const std::string& path) {
     return ss.str();
 }
 
+/// How many nodes the subtree at `index` holds, counting the node itself.
+std::uint32_t countSubtree(const makina::Scene& s, std::uint16_t index) {
+    std::uint32_t n = 1;
+    for (std::uint16_t i = 0; i < s.nodes[index].childCount; ++i) {
+        n += countSubtree(s, static_cast<std::uint16_t>(s.nodes[index].firstChild + i));
+    }
+    return n;
+}
+
 /// Everything that has to be true of any scene, whoever built it.
 void checkStructure(const makina::Scene& s, const std::string& what) {
     if (s.nodes.count == 0) {
@@ -216,8 +225,66 @@ void exercise(const std::string& path) {
         }
     }
 
+    // --- duplicate ---------------------------------------------------------------------------
+    if (original.nodes[0].childCount > 0) {
+        const std::uint16_t firstIndex = original.nodes[0].firstChild;
+        const std::uint32_t firstId = original.nodes[firstIndex].id;
+        const std::uint32_t subtreeSize = countSubtree(original, firstIndex);
+
+        const makina::EditResult copied = makina::duplicateSubtree(original, firstId);
+        check(copied.ok, "duplicateSubtree: " + copied.why);
+        if (copied.ok) {
+            checkStructure(copied.scene, "after duplicateSubtree");
+            check(copied.scene.nodes.count == original.nodes.count + subtreeSize,
+                  "duplicate: the copy is not the size of what was copied");
+
+            // Every id in the scene must still be unique. This is the check the whole thing
+            // exists for: copySubtree hands back the originals' ids, and a second node answering
+            // to an id already in use would be unreachable by every command in Command.hpp.
+            bool unique = true;
+            for (std::uint32_t i = 0; i < copied.scene.nodes.count && unique; ++i) {
+                for (std::uint32_t j = i + 1; j < copied.scene.nodes.count; ++j) {
+                    if (copied.scene.nodes[i].id == copied.scene.nodes[j].id) {
+                        check(false, "duplicate: id " + std::to_string(copied.scene.nodes[i].id) +
+                                         " appears twice");
+                        unique = false;
+                        break;
+                    }
+                }
+            }
+
+            const std::uint16_t copyIndex = makina::indexOfId(copied.scene, copied.newId);
+            check(copyIndex != makina::kNoChild, "duplicate: the new id is not findable");
+            if (copyIndex != makina::kNoChild) {
+                check(copied.scene.nodes[copyIndex].parent ==
+                          makina::indexOfId(copied.scene, rootId),
+                      "duplicate: the copy did not land beside the original");
+                // Next sibling, not appended: under a Difference the order is the geometry.
+                check(copied.scene.nodes[copyIndex].firstChild != makina::kNoChild ||
+                          original.nodes[firstIndex].childCount == 0,
+                      "duplicate: the copy lost its children");
+                const std::uint16_t rootIndex = makina::indexOfId(copied.scene, rootId);
+                check(copied.scene.nodes[rootIndex].firstChild + 1 == copyIndex,
+                      "duplicate: the copy is not the next sibling of the original");
+            }
+
+            // Removing the copy has to put the scene back to what it was.
+            const makina::EditResult undone = makina::removeSubtree(copied.scene, copied.newId);
+            check(undone.ok, "duplicate then remove: " + undone.why);
+            if (undone.ok) {
+                check(undone.scene.nodes.count == original.nodes.count,
+                      "duplicate then remove: node count");
+                check(sameField(before, sample(undone.scene)),
+                      "duplicate then remove changed the distance field");
+            }
+        }
+    }
+
     // --- refusals ---------------------------------------------------------------------------
     check(!makina::removeSubtree(original, rootId).ok, "the root should not be removable");
+    check(!makina::duplicateSubtree(original, rootId).ok, "the root should not be duplicable");
+    check(!makina::duplicateSubtree(original, 0xFFFFFFFFu).ok,
+          "duplicating a missing id should fail");
     check(!makina::addChild(original, 0xFFFFFFFFu, sphere, "x").ok,
           "adding under a missing id should fail");
     if (original.nodes[0].childCount > 0) {
