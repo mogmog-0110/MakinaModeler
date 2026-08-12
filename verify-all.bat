@@ -59,6 +59,21 @@ if errorlevel 1 (
 
 echo.
 echo ============================================================
+echo  4. the viewport
+echo ============================================================
+echo    scripted keys in, the edited tree out
+echo.
+call "%HERE%app\build-viewport.bat" >nul 2>&1
+if errorlevel 1 (
+    echo    ERROR: the viewport did not build
+    set FAILED=1
+) else (
+    call "%HERE%app\viewport-check.bat"
+    if errorlevel 1 set FAILED=1
+)
+
+echo.
+echo ============================================================
 if "%FAILED%"=="0" (
     echo  everything agrees
     exit /b 0

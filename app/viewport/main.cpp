@@ -6,6 +6,7 @@
 // Keymap.hpp). What is added here is only the wiring: messages in, a frame out.
 //
 //   makina_viewport <scene.makina.json> [--keymap maya|blender]
+//                   [--frames N] [--screenshot <path>] [--select <id>] [--keys "W X 5 ENTER"]
 //
 // Everything the user can do arrives as an action name from the keymap, never as a hard-coded
 // key. That is not indirection for its own sake: Phase 3's exit condition is that someone who uses
@@ -24,13 +25,17 @@
 #include <makina/Flatten.hpp>
 #include <makina/Keymap.hpp>
 #include <makina/Pick.hpp>
+#include <makina/History.hpp>
 #include <makina/SceneJson.hpp>
+#include <makina/Transform.hpp>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,9 +74,20 @@ std::vector<char> readBinary(const std::string& path) {
                              std::istreambuf_iterator<char>());
 }
 
-std::string dirOf(const std::string& path) {
-    const std::size_t cut = path.find_last_of("/\\");
-    return cut == std::string::npos ? std::string(".") : path.substr(0, cut);
+/// Where the generated shader and its compiled blobs go.
+///
+/// Not next to the scene. Scenes live in the repository, and a viewport that drops a .hlsl, two
+/// .cso and DXC's logs beside every file it opens turns `git status` into noise and eventually
+/// commits build output as test data.
+std::string scratchDir() {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "makina_viewport";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        throw std::runtime_error("could not make a scratch directory for the generated shader: " +
+                                 ec.message());
+    }
+    return dir.string();
 }
 
 app::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
@@ -158,6 +174,15 @@ int main(int argc, char** argv) {
     // be the only evidence there is. These two turn it into a picture that can be checked.
     int         frameLimit = 0;
     std::string screenshot;
+    // Synthetic input, for the same reason --screenshot exists: a transform is a state machine
+    // spread over several frames, and nothing automated can press G, X, 5, Enter. One key per
+    // frame, because that is how the real thing arrives -- feeding them all at once would test a
+    // code path the user never takes.
+    std::vector<std::string> scriptedKeys;
+    std::uint32_t            scriptedSelection = 0;
+    // Writes the tree out on exit, so an edit can be read as numbers rather than judged from a
+    // picture. "The image changed" only says something changed.
+    std::string savePath;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keymap" && i + 1 < argc) {
@@ -166,24 +191,33 @@ int main(int argc, char** argv) {
             frameLimit = std::atoi(argv[++i]);
         } else if (a == "--screenshot" && i + 1 < argc) {
             screenshot = argv[++i];
+        } else if (a == "--keys" && i + 1 < argc) {
+            std::istringstream keys(argv[++i]);
+            for (std::string k; keys >> k;) {
+                scriptedKeys.push_back(k);
+            }
+        } else if (a == "--select" && i + 1 < argc) {
+            scriptedSelection = static_cast<std::uint32_t>(std::atoi(argv[++i]));
+        } else if (a == "--save" && i + 1 < argc) {
+            savePath = argv[++i];
         } else {
             scenePath = a;
         }
     }
     if (scenePath.empty()) {
         std::fprintf(stderr,
-                     "usage: makina_viewport <scene.makina.json> [--keymap maya|blender]\n");
+                     "usage: makina_viewport <scene.makina.json> [--keymap maya|blender]\n"
+                     "       [--frames N] [--screenshot <path>]\n"
+                     "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n");
         return 2;
     }
 
     try {
-        const makina::Scene scene = makina::parseScene(readFile(scenePath));
-        const makina::EvalProgram prog = makina::flatten(scene);
-        if (prog.nodes.empty()) {
+        makina::History history(makina::parseScene(readFile(scenePath)), 64);
+        if (makina::flatten(history.current()).nodes.empty()) {
             std::fprintf(stderr, "error: '%s' has nothing renderable in it\n", scenePath.c_str());
             return 1;
         }
-        const makina::BoundsResult bounds = makina::worldBounds(scene);
 
         makina::Keymap keymap;
         std::string keymapError;
@@ -199,84 +233,130 @@ int main(int argc, char** argv) {
         app::SwapchainDevice dev(window.handle(), 1280, 720);
         std::wprintf(L"adapter    : %ls\n", dev.adapterName().c_str());
         std::printf("keymap     : %s\n", keymap.name().c_str());
-        std::printf("%u authoring nodes -> %zu program nodes\n\n", scene.nodes.count,
-                    prog.nodes.size());
 
-        // Compiled once, here, because the scene does not change yet. When editing arrives this
-        // becomes "recompile on edit", which is the 150-250 ms the modeller can afford and the
-        // engine cannot (docs/SPIKE_PERF.md 9).
-        const std::string outDir = dirOf(scenePath);
+        const std::string outDir = scratchDir();
         const std::string hlslPath = outDir + "/viewport.gen.hlsl";
-        {
-            std::ofstream out(hlslPath, std::ios::binary);
-            out << spike::generateShader(prog, "scene_shading.hlsl");
-        }
-        const spike::DxcPaths dxc{DXC_PATH, SPIKE_SHADER_DIR, MAKINA_CORE_INCLUDE};
         const std::string vsPath = outDir + "/viewport_vs.cso";
         const std::string psPath = outDir + "/viewport_ps.cso";
-        spike::compileHlsl(dxc, hlslPath, "vs_6_0", "VSMain", vsPath);
-        spike::compileHlsl(dxc, hlslPath, "ps_6_0", "PSMain", psPath);
-
-        const std::vector<char> vs = readBinary(vsPath);
-        const std::vector<char> ps = readBinary(psPath);
+        const spike::DxcPaths dxc{DXC_PATH, SPIKE_SHADER_DIR, MAKINA_CORE_INCLUDE};
 
         app::ComPtr<ID3D12RootSignature> rootSig = createRootSignature(dev.device());
 
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
-        pd.pRootSignature = rootSig.Get();
-        pd.VS = {vs.data(), vs.size()};
-        pd.PS = {ps.data(), ps.size()};
-        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-        pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-        pd.DepthStencilState.DepthEnable = FALSE;
-        pd.SampleMask = UINT_MAX;
-        pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        pd.NumRenderTargets = 1;
-        pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-        pd.SampleDesc.Count = 1;
-
+        // Everything that depends on the tree, rebuilt whenever the tree changes.
+        //
+        // Generating and compiling costs 150-250 ms, which is what the modeller can afford and a
+        // game cannot (docs/SPIKE_PERF.md 9). It happens once per committed edit, not per frame:
+        // during a drag the number in the header is the feedback, and the picture catches up when
+        // the edit lands. A live preview would want the interpreted path instead -- same picture,
+        // no compile -- and that is the next thing worth doing here.
+        makina::EvalProgram             prog;
+        makina::BoundsResult            bounds;
+        double                          sceneRadius = 1.0;
         app::ComPtr<ID3D12PipelineState> pso;
-        app::check(dev.device()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso)),
-                   "CreateGraphicsPipelineState");
+        std::unique_ptr<RingBuffer>      program;
+        D3D12_GPU_VIRTUAL_ADDRESS        programAddress = 0;
 
-        RingBuffer constants(dev.device(), sizeof(FrameParams));
+        auto rebuild = [&]() {
+            prog = makina::flatten(history.current());
+            bounds = makina::worldBounds(history.current());
 
-        // The program never changes while the scene is fixed, so one buffer on the upload heap is
-        // enough. Editing will move this to the ring alongside the constants.
-        RingBuffer program(dev.device(), prog.nodes.size() * sizeof(makina::EvalNode));
-        const D3D12_GPU_VIRTUAL_ADDRESS programAddress =
-            program.write(prog.nodes.data(), prog.nodes.size() * sizeof(makina::EvalNode));
-
-        double sceneRadius = 1.0;
-        if (bounds.box.valid) {
-            double diag = 0.0;
-            for (int i = 0; i < 3; ++i) {
-                const double span = bounds.box.hi[i] - bounds.box.lo[i];
-                diag += span * span;
+            sceneRadius = 1.0;
+            if (bounds.box.valid) {
+                double diag = 0.0;
+                for (int i = 0; i < 3; ++i) {
+                    const double span = bounds.box.hi[i] - bounds.box.lo[i];
+                    diag += span * span;
+                }
+                sceneRadius = std::sqrt(diag) * 0.5;
+                if (sceneRadius < 1e-6) {
+                    sceneRadius = 1e-6;
+                }
             }
-            sceneRadius = std::sqrt(diag) * 0.5;
-        }
+            if (prog.nodes.empty()) {
+                return;
+            }
+
+            {
+                std::ofstream out(hlslPath, std::ios::binary);
+                out << spike::generateShader(prog, "scene_shading.hlsl");
+            }
+            spike::compileHlsl(dxc, hlslPath, "vs_6_0", "VSMain", vsPath);
+            spike::compileHlsl(dxc, hlslPath, "ps_6_0", "PSMain", psPath);
+
+            const std::vector<char> vs = readBinary(vsPath);
+            const std::vector<char> ps = readBinary(psPath);
+
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+            pd.pRootSignature = rootSig.Get();
+            pd.VS = {vs.data(), vs.size()};
+            pd.PS = {ps.data(), ps.size()};
+            pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+            pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+            pd.DepthStencilState.DepthEnable = FALSE;
+            pd.SampleMask = UINT_MAX;
+            pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pd.NumRenderTargets = 1;
+            pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+            pd.SampleDesc.Count = 1;
+
+            // The pipeline and the buffer about to be replaced may still be referenced by a frame
+            // in flight. Releasing those is a device removal, not an error message.
+            dev.waitForGpu();
+            app::ComPtr<ID3D12PipelineState> next;
+            app::check(dev.device()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&next)),
+                       "CreateGraphicsPipelineState");
+            pso = next;
+
+            const std::size_t bytes = prog.nodes.size() * sizeof(makina::EvalNode);
+            program = std::make_unique<RingBuffer>(dev.device(), bytes);
+            programAddress = program->write(prog.nodes.data(), bytes);
+        };
+        rebuild();
+        std::printf("%u authoring nodes -> %zu program nodes\n\n",
+                    history.current().nodes.count, prog.nodes.size());
+
+        // The frame constants are the same size whatever the scene, so this one outlives a rebuild.
+        RingBuffer constants(dev.device(), sizeof(FrameParams));
 
         makina::Camera camera;
         camera = makina::frameBox(camera, bounds.box, 1280.0 / 720.0);
 
-        std::uint32_t selectedId = 0;
+        std::uint32_t selectedId = scriptedSelection;
         int           descendDepth = 0;
         std::uint32_t lastPickedId = 0;
+        makina::TransformSession transform;
+        std::string   lastStatus;
 
         std::printf("orbit / pan / dolly per the keymap. F fits the selection, A fits everything.\n");
         std::printf("Escape quits.\n\n");
 
-        int frame = 0;
+        int          frame = 0;
+        std::size_t  scriptAt = 0;
         while (window.alive()) {
-            const app::FrameInput in = window.pump();
+            app::FrameInput in = window.pump();
+            int scriptedMods = makina::mods::kNone;
+            if (scriptAt < scriptedKeys.size()) {
+                // "CTRL+Z" rather than a bare key: undo and redo are the bindings most worth
+                // driving from a script, and both are modified ones in every preset.
+                std::string k = scriptedKeys[scriptAt++];
+                for (std::size_t plus = k.find('+'); plus != std::string::npos;
+                     plus = k.find('+')) {
+                    const std::string m = k.substr(0, plus);
+                    k.erase(0, plus + 1);
+                    if (m == "CTRL") scriptedMods |= makina::mods::kCtrl;
+                    else if (m == "SHIFT") scriptedMods |= makina::mods::kShift;
+                    else if (m == "ALT") scriptedMods |= makina::mods::kAlt;
+                    else std::fprintf(stderr, "warning: --keys: unknown modifier '%s'\n", m.c_str());
+                }
+                in.keysPressed.push_back(k);
+            }
             if (window.consumeResize()) {
                 dev.resize(in.width, in.height);
             }
             const double aspect = in.aspect();
 
-            int modifiers = makina::mods::kNone;
+            int modifiers = scriptedMods;
             if (in.shift) modifiers |= makina::mods::kShift;
             if (in.ctrl) modifiers |= makina::mods::kCtrl;
             if (in.alt) modifiers |= makina::mods::kAlt;
@@ -324,7 +404,7 @@ int main(int argc, char** argv) {
                     // clicking anything else starts at the top again. Without the reset, a click
                     // on a different part would inherit a depth that means nothing there.
                     const makina::PickResult probe = makina::pickThroughCamera(
-                        scene, camera, in.cursorU, in.cursorV, aspect, 0);
+                        history.current(), camera, in.cursorU, in.cursorV, aspect, 0);
                     if (!probe.hit) {
                         selectedId = 0;
                         descendDepth = 0;
@@ -337,22 +417,103 @@ int main(int argc, char** argv) {
                         }
                         lastPickedId = probe.primitiveId;
                         const makina::PickResult r = makina::pickThroughCamera(
-                            scene, camera, in.cursorU, in.cursorV, aspect, descendDepth);
+                            history.current(), camera, in.cursorU, in.cursorV, aspect, descendDepth);
                         selectedId = r.id;
-                        const std::uint16_t index = makina::indexOfId(scene, r.id);
+                        const std::uint16_t index = makina::indexOfId(history.current(), r.id);
                         std::printf("selected id %u  %-16s  %s   (%d level(s) further in)\n", r.id,
-                                    index == makina::kNoChild ? "" : scene.nameOf(scene.nodes[index]),
                                     index == makina::kNoChild
                                         ? ""
-                                        : makina::opName(
-                                              static_cast<makina::Op>(scene.nodes[index].op)),
+                                        : history.current().nameOf(history.current().nodes[index]),
+                                    index == makina::kNoChild
+                                        ? ""
+                                        : makina::opName(static_cast<makina::Op>(
+                                              history.current().nodes[index].op)),
                                     r.remainingDepth);
                     }
                 }
             }
 
+            // --- a transform in progress ---------------------------------------------------
+            //
+            // Handled before anything else, because while one is running the same keys mean
+            // different things: X is an axis, not delete, and Escape cancels rather than quits.
+            //
+            // Whether one was running is remembered, because the block below can end it: Escape
+            // cancels a transform, and without this the same Escape would fall through to the key
+            // loop and quit the application.
+            const bool wasTransforming = transform.active();
+            if (transform.active()) {
+                transform.setSnap(in.ctrl);
+                if (in.dx != 0.0 || in.dy != 0.0) {
+                    // One screen width is one unit for a move, ninety degrees for a rotate.
+                    const double gain = transform.kind() == makina::TransformKind::Rotate ? 90.0
+                                        : transform.kind() == makina::TransformKind::Scale ? 2.0
+                                                                                           : 1.0;
+                    transform.mouseDelta(in.dx * gain * sceneRadius /
+                                         (transform.kind() == makina::TransformKind::Move
+                                              ? 1.0
+                                              : sceneRadius));
+                }
+
+                bool finish = false;
+                bool abandon = false;
+                for (const std::string& k : in.keysPressed) {
+                    if (k == "ESCAPE") {
+                        abandon = true;
+                    } else if (k == "ENTER") {
+                        finish = true;
+                    } else if (k == "BACKSPACE") {
+                        transform.backspace();
+                    } else if (k.size() == 1 && transform.type(k[0])) {
+                        // Consumed by the number.
+                    } else {
+                        makina::InputEvent e;
+                        e.key = k;
+                        e.modifiers = modifiers;
+                        e.context = makina::KeyContext::Transform;
+                        const makina::Action a = keymap.resolve(e);
+                        if (a == "axis.x") transform.setAxis(makina::TransformAxis::X);
+                        else if (a == "axis.y") transform.setAxis(makina::TransformAxis::Y);
+                        else if (a == "axis.z") transform.setAxis(makina::TransformAxis::Z);
+                    }
+                }
+                // Clicking confirms too, which is what a hand already on the mouse expects.
+                if (in.leftPressed) {
+                    finish = true;
+                }
+
+                const std::string status = transform.status();
+                if (status != lastStatus) {
+                    std::printf("  %s\n", status.c_str());
+                    std::fflush(stdout);
+                    lastStatus = status;
+                }
+
+                if (abandon) {
+                    // Nothing was applied, so there is nothing to put back. That is the whole
+                    // reason the session holds no scene.
+                    transform.cancel();
+                    std::printf("\ncancelled\n");
+                } else if (finish) {
+                    const makina::EditResult r = makina::applyTransform(
+                        history.current(), selectedId, transform.kind(), transform.axis(),
+                        transform.value());
+                    if (r.ok) {
+                        history.commit(r.scene, transform.status());
+                        std::printf("\n%s -> committed\n", transform.status().c_str());
+                        rebuild();
+                    } else {
+                        std::printf("\nrefused: %s\n", r.why.c_str());
+                    }
+                    transform.cancel();
+                }
+            }
+
             // --- keys ----------------------------------------------------------------------
             for (const std::string& k : in.keysPressed) {
+                if (wasTransforming) {
+                    break;
+                }
                 if (k == "ESCAPE") {
                     return 0;
                 }
@@ -361,12 +522,43 @@ int main(int argc, char** argv) {
                 e.modifiers = modifiers;
                 const makina::Action action = keymap.resolve(e);
 
+                if (action == "edit.move" || action == "edit.rotate" || action == "edit.scale") {
+                    if (selectedId == 0) {
+                        std::printf("nothing selected\n");
+                    } else {
+                        transform.begin(action == "edit.move"     ? makina::TransformKind::Move
+                                        : action == "edit.rotate" ? makina::TransformKind::Rotate
+                                                                  : makina::TransformKind::Scale);
+                        lastStatus.clear();
+                    }
+                    continue;
+                }
+                if (action == "edit.undo") {
+                    if (history.undo()) {
+                        std::printf("undo\n");
+                        rebuild();
+                    } else {
+                        std::printf("nothing to undo\n");
+                    }
+                    continue;
+                }
+                if (action == "edit.redo") {
+                    if (history.redo()) {
+                        std::printf("redo\n");
+                        rebuild();
+                    } else {
+                        std::printf("nothing to redo\n");
+                    }
+                    continue;
+                }
+
                 if (action == "view.fitAll") {
                     camera = makina::frameBox(camera, bounds.box, aspect);
                 } else if (action == "view.fitSelected") {
-                    const std::uint16_t index = makina::indexOfId(scene, selectedId);
-                    const makina::Aabb box =
-                        index == makina::kNoChild ? bounds.box : makina::worldBounds(scene, index).box;
+                    const std::uint16_t index = makina::indexOfId(history.current(), selectedId);
+                    const makina::Aabb box = index == makina::kNoChild
+                                                 ? bounds.box
+                                                 : makina::worldBounds(history.current(), index).box;
                     camera = makina::frameBox(camera, box, aspect);
                 } else if (action == "view.front") {
                     camera = makina::lookAlong(camera, makina::ViewAxis::Front);
@@ -402,7 +594,7 @@ int main(int argc, char** argv) {
             }
             p.tanHalfFov = static_cast<float>(std::tan(camera.fovY * 3.14159265358979 / 360.0));
             p.aspect = static_cast<float>(aspect);
-            p.nodeCount = scene.nodes.count;
+            p.nodeCount = history.current().nodes.count;
             p.maxSteps = 192;
             p.stepScale = 0.85f;
             p.farDist = static_cast<float>(camera.distance + sceneRadius * 2.5);
@@ -423,9 +615,9 @@ int main(int argc, char** argv) {
             // purpose: an exact one needs the shader to know which nodes belong to the selection,
             // and that is a change to the generated program rather than to a constant. Good
             // enough to answer "did my click land on what I meant", which is what step 4 is for.
-            const std::uint16_t selIndex = makina::indexOfId(scene, selectedId);
+            const std::uint16_t selIndex = makina::indexOfId(history.current(), selectedId);
             if (selIndex != makina::kNoChild) {
-                const makina::BoundsResult sel = makina::worldBounds(scene, selIndex);
+                const makina::BoundsResult sel = makina::worldBounds(history.current(), selIndex);
                 if (sel.box.valid) {
                     for (int i = 0; i < 3; ++i) {
                         p.selMin[i] = static_cast<float>(sel.box.lo[i]);
@@ -450,6 +642,17 @@ int main(int argc, char** argv) {
 
             if (frameLimit > 0 && ++frame >= frameLimit) {
                 break;
+            }
+        }
+
+        if (!savePath.empty()) {
+            std::ofstream out(savePath, std::ios::binary);
+            if (!out) {
+                std::fprintf(stderr, "warning: could not write the scene to '%s'\n",
+                             savePath.c_str());
+            } else {
+                out << makina::writeScene(history.current());
+                std::printf("wrote %s\n", savePath.c_str());
             }
         }
 
