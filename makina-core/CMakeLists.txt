@@ -40,12 +40,16 @@ target_link_libraries(command_check PRIVATE makina_core)
 add_executable(camera_check tests/camera_check.cpp)
 target_link_libraries(camera_check PRIVATE makina_core)
 
+# Builds its own scene inline: picking is about the hierarchy rule, not about any one model.
+add_executable(pick_check tests/pick_check.cpp)
+target_link_libraries(pick_check PRIVATE makina_core)
+
 # Not a test: the headless command line an agent drives (describe / apply / measure).
 add_executable(makina_edit tools/makina_edit.cpp)
 target_link_libraries(makina_edit PRIVATE makina_core)
 
 foreach(t roundtrip sdf_compare measure_compare pov_compare bsp_compare edit_check command_check
-          camera_check makina_edit)
+          camera_check pick_check makina_edit)
     if(MSVC)
         # /utf-8: sources are UTF-8 but MSVC otherwise assumes the ANSI code page.
         target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
@@ -69,6 +73,7 @@ if(FIXTURE_SCENES)
     add_test(NAME edit_check COMMAND edit_check ${FIXTURE_SCENES})
     add_test(NAME command_check COMMAND command_check ${FIXTURE_SCENES})
     add_test(NAME camera_check COMMAND camera_check)
+    add_test(NAME pick_check COMMAND pick_check)
 else()
     message(WARNING "tests/scenes holds no scenes; ctest will have nothing to run")
 endif()
