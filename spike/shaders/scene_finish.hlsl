@@ -27,7 +27,7 @@ struct MkMaterial {
     float  brilliance;    float specular;
     float  roughness;     float phong;
     float  phongSize;     float metallic;
-    float  emission;      float _pad;
+    float  emission;      float textureIndex;
 };
 
 StructuredBuffer<MkMaterial> gMaterials : register(t1);
@@ -50,7 +50,7 @@ MkMaterial mkDefaultMaterial() {
     m.phongSize = 40.0;
     m.metallic = 0.0;
     m.emission = 0.0;
-    m._pad = 0.0;
+    m.textureIndex = -1.0;
     return m;
 }
 
@@ -64,6 +64,9 @@ MkMaterial mkMaterialAt(float index, uint count) {
     }
     return gMaterials[i];
 }
+
+// Declared after MkMaterial because the pigment lookup takes one.
+#include "scene_pigment.hlsl"
 
 /// One light, POV's way.
 ///

@@ -51,7 +51,8 @@ struct alignas(256) FrameParams {
     float lightDir[3];  float stepScale;
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
-    std::uint32_t programCount;  std::uint32_t materialCount;  std::uint32_t pad0[2];
+    std::uint32_t programCount;  std::uint32_t materialCount;
+    std::uint32_t pigmentCount;  std::uint32_t pad0;
     float selMin[3];    float selValid;
     float selMax[3];    float pad1;
 };
@@ -122,20 +123,24 @@ app::ComPtr<ID3D12PipelineState> createPipeline(ID3D12Device* device, ID3D12Root
 app::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // b0 for the frame, t0 for the evaluation program -- the same signature the offscreen renderer
     // uses, so the generated shaders are interchangeable between them.
-    D3D12_ROOT_PARAMETER param[3]{};
+    D3D12_ROOT_PARAMETER param[4]{};
     param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     param[0].Descriptor.ShaderRegister = 0;
     param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     param[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[1].Descriptor.ShaderRegister = 0;
     param[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-    // t1, the material table. Declared by every shading wrapper, so it is bound on both paths.
+    // t1 the material table, t2 the pigments. Declared by every shading wrapper, so both are
+    // bound on both paths.
     param[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[2].Descriptor.ShaderRegister = 1;
     param[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    param[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    param[3].Descriptor.ShaderRegister = 2;
+    param[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 3;
+    desc.NumParameters = 4;
     desc.pParameters = param;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -289,6 +294,9 @@ int main(int argc, char** argv) {
         std::unique_ptr<RingBuffer>      materials;
         D3D12_GPU_VIRTUAL_ADDRESS        materialAddress = 0;
         std::uint32_t                    materialCount = 0;
+        std::unique_ptr<RingBuffer>      pigments;
+        D3D12_GPU_VIRTUAL_ADDRESS        pigmentAddress = 0;
+        std::uint32_t                    pigmentCount = 0;
 
         auto rebuild = [&]() {
             prog = makina::flatten(history.current());
@@ -305,6 +313,15 @@ int main(int argc, char** argv) {
             const std::size_t materialBytes = mats.size() * sizeof(makina::GpuMaterial);
             materials = std::make_unique<RingBuffer>(dev.device(), materialBytes);
             materialAddress = materials->write(mats.data(), materialBytes);
+
+            std::vector<makina::Pigment> pigs = makina::gpuPigments(history.current());
+            pigmentCount = history.current().pigments.count;
+            if (pigs.empty()) {
+                pigs.push_back(makina::Pigment{});
+            }
+            const std::size_t pigmentBytes = pigs.size() * sizeof(makina::Pigment);
+            pigments = std::make_unique<RingBuffer>(dev.device(), pigmentBytes);
+            pigmentAddress = pigments->write(pigs.data(), pigmentBytes);
 
             sceneRadius = 1.0;
             if (bounds.box.valid) {
@@ -751,6 +768,7 @@ int main(int argc, char** argv) {
             // below is the committed one. Counting the preview's would let the shader index past
             // the end of what is actually bound.
             p.materialCount = materialCount;
+            p.pigmentCount = pigmentCount;
 
             float light[3] = {-0.45f, -0.78f, -0.44f};
             const float len =
@@ -794,6 +812,7 @@ int main(int argc, char** argv) {
                 cl->SetGraphicsRootShaderResourceView(1, programAddress);
             }
             cl->SetGraphicsRootShaderResourceView(2, materialAddress);
+            cl->SetGraphicsRootShaderResourceView(3, pigmentAddress);
             if (previewing || !prog.nodes.empty()) {
                 cl->DrawInstanced(3, 1, 0, 0);
             }

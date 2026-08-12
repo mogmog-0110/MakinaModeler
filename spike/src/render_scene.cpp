@@ -34,7 +34,8 @@ struct alignas(256) FrameParams {
     float lightDir[3];  float stepScale;
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
-    std::uint32_t programCount;  std::uint32_t materialCount;  std::uint32_t pad[2];
+    std::uint32_t programCount;  std::uint32_t materialCount;
+    std::uint32_t pigmentCount;  std::uint32_t pad;
     // Only the interactive viewport highlights a selection; zero here means "nothing selected",
     // which is what every offscreen render wants.
     float selMin[3];    float selValid;
@@ -154,7 +155,7 @@ spike::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // descriptor table: it is one buffer bound once per draw, and a heap plus a descriptor would
     // be machinery around a single pointer. The generated-code path leaves t0 unbound, which is
     // legal because its shader never declares it.
-    D3D12_ROOT_PARAMETER param[3]{};
+    D3D12_ROOT_PARAMETER param[4]{};
     param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     param[0].Descriptor.ShaderRegister = 0;
     param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -166,9 +167,13 @@ spike::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     param[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[2].Descriptor.ShaderRegister = 1;
     param[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    // t2 is the pigment table.
+    param[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    param[3].Descriptor.ShaderRegister = 2;
+    param[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 3;
+    desc.NumParameters = 4;
     desc.pParameters = param;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -388,6 +393,7 @@ int main(int argc, char** argv) {
                     FrameParams params = frameScene(bounds.box, width, height, maxSteps);
                     params.nodeCount = static_cast<std::uint32_t>(prog.nodes.size());
                     params.materialCount = scene.materials.count;
+                    params.pigmentCount = scene.pigments.count;
                     params.debugMode = debugSweep ? static_cast<std::uint32_t>(pass + 1) : 0u;
 
                     params.programCount = static_cast<std::uint32_t>(prog.nodes.size());
@@ -412,6 +418,14 @@ int main(int argc, char** argv) {
                     spike::GpuBuffer materialBuffer = dev.createBufferWithData(
                         mats.data(), mats.size() * sizeof(makina::GpuMaterial), L"materials");
 
+                    // Same rule as the materials: a declared SRV must be bound to something.
+                    std::vector<makina::Pigment> pigs = makina::gpuPigments(scene);
+                    if (pigs.empty()) {
+                        pigs.push_back(makina::Pigment{});
+                    }
+                    spike::GpuBuffer pigmentBuffer = dev.createBufferWithData(
+                        pigs.data(), pigs.size() * sizeof(makina::Pigment), L"pigments");
+
                     dev.beginFrame();
                     dev.uploadBuffer(cb, sizeof(params),
                                      D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
@@ -419,6 +433,9 @@ int main(int argc, char** argv) {
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                     dev.uploadBuffer(materialBuffer, mats.size() * sizeof(makina::GpuMaterial),
+                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                    dev.uploadBuffer(pigmentBuffer, pigs.size() * sizeof(makina::Pigment),
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                     dev.executeAndWait();
@@ -441,6 +458,8 @@ int main(int argc, char** argv) {
                             1, programBuffer.resource->GetGPUVirtualAddress());
                         cl->SetGraphicsRootShaderResourceView(
                             2, materialBuffer.resource->GetGPUVirtualAddress());
+                        cl->SetGraphicsRootShaderResourceView(
+                            3, pigmentBuffer.resource->GetGPUVirtualAddress());
 
                         dev.writeTimestamp(0);
                         cl->DrawInstanced(3, 1, 0, 0);

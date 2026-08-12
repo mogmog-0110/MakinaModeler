@@ -75,6 +75,10 @@ float4 PSMain(VSOut i) : SV_Target {
     // One more evaluation, at the hit point only, to learn which surface this is. The march and
     // the normal never pay for it (scene_codegen.hpp explains why it is a separate function).
     MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+    // The pattern is read at the hit point, in the space the march runs in -- POV transforms a
+    // pigment with its object, so a moved solid takes its texture with it rather than sliding
+    // through a pattern fixed to the world.
+    mat.diffuseColor = mkSurfaceColor(mat, mat.textureIndex, p);
 
     // The occlusion multiplies the light, not the material: POV has no ambient occlusion at all,
     // so folding it into the ambient term would be inventing a difference from the oracle in the

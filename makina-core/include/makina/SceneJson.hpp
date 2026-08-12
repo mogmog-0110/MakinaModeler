@@ -118,6 +118,85 @@ inline void fillNode(Scene& s, std::uint16_t index, const nlohmann::json& j) {
     }
 }
 
+/// Reads one pigment, defaulting everything a POV pigment block would default.
+///
+/// An unknown pattern name is refused rather than ignored. A file that says `marble` and gets a
+/// flat color looks like a renderer that cannot do marble, when what happened is that nobody
+/// implemented it -- and the two call for different reactions.
+inline Pigment readPigment(const nlohmann::json& j) {
+    Pigment p{};
+    const std::string type = j.value("type", std::string("checker"));
+    if (type == "checker") {
+        p.type = static_cast<std::uint8_t>(PigmentType::Checker);
+    } else if (type == "gradient") {
+        p.type = static_cast<std::uint8_t>(PigmentType::Gradient);
+    } else if (type == "radial") {
+        p.type = static_cast<std::uint8_t>(PigmentType::Radial);
+    } else {
+        throw SceneJsonError("pigment type '" + type + "' is not one this renderer has; it takes "
+                             "checker, gradient or radial");
+    }
+
+    const auto rgb = [&j](const char* key, float (&dst)[3], float fallback) {
+        if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
+            for (int c = 0; c < 3; ++c) {
+                // 0-255 like Material::diffuse, so one file does not mix two conventions.
+                dst[c] = j[key][c].get<float>() / 255.0f;
+            }
+        } else {
+            dst[0] = dst[1] = dst[2] = fallback;
+        }
+    };
+    rgb("colorA", p.a, 1.0f);
+    rgb("colorB", p.b, 0.0f);
+
+    const auto vec3 = [&j](const char* key, float (&dst)[3], float fx, float fy, float fz) {
+        if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
+            for (int c = 0; c < 3; ++c) {
+                dst[c] = j[key][c].get<float>();
+            }
+        } else {
+            dst[0] = fx;
+            dst[1] = fy;
+            dst[2] = fz;
+        }
+    };
+    vec3("scale", p.scale, 1.0f, 1.0f, 1.0f);
+    vec3("translate", p.translate, 0.0f, 0.0f, 0.0f);
+    vec3("axis", p.axis, 1.0f, 0.0f, 0.0f);
+
+    // A zero scale divides by itself in the shader. POV rejects it too.
+    for (int c = 0; c < 3; ++c) {
+        if (p.scale[c] == 0.0f) {
+            throw SceneJsonError("a pigment scale of zero has no meaning; POV rejects it as well");
+        }
+    }
+    return p;
+}
+
+/// The inverse of readPigment, field for field, so a scene survives a round trip.
+inline nlohmann::ordered_json writePigment(const Pigment& p) {
+    const char* type = "checker";
+    switch (static_cast<PigmentType>(p.type)) {
+        case PigmentType::Gradient: type = "gradient"; break;
+        case PigmentType::Radial:   type = "radial"; break;
+        default:                    type = "checker"; break;
+    }
+    const auto rgb = [](const float (&c)[3]) {
+        return nlohmann::ordered_json{int(c[0] * 255.0f + 0.5f), int(c[1] * 255.0f + 0.5f),
+                                      int(c[2] * 255.0f + 0.5f)};
+    };
+    const auto vec3 = [](const float (&c)[3]) {
+        return nlohmann::ordered_json{c[0], c[1], c[2]};
+    };
+    return nlohmann::ordered_json{{"type", type},
+                                  {"colorA", rgb(p.a)},
+                                  {"colorB", rgb(p.b)},
+                                  {"scale", vec3(p.scale)},
+                                  {"translate", vec3(p.translate)},
+                                  {"axis", vec3(p.axis)}};
+}
+
 inline void readRoot(Scene& s, const nlohmann::json& j) {
     if (Scene::kMaxNodes < 1) {
         throw SceneJsonError("scene capacity is zero");
@@ -217,8 +296,19 @@ inline Scene parseScene(const std::string& text) {
             dst.specular = m.value("specular", 0.0f);
             dst.shininess = m.value("shininess", 0.0f);
             dst.emission = m.value("emission", 0.0f);
+            // A pigment, when the material names one. Read here rather than from a separate table
+            // so a material and its pattern stay one thing in the file -- which is how POV writes
+            // it too, and how anyone editing the JSON by hand would expect to find it.
             dst.textureId = -1;
             dst._pad = 0;
+            if (m.contains("pigment") && m["pigment"].is_object()) {
+                if (s.pigments.count >= Scene::kMaxPigments) {
+                    throw SceneJsonError("scene exceeds the " +
+                                         std::to_string(Scene::kMaxPigments) + " pigment limit");
+                }
+                dst.textureId = static_cast<std::int32_t>(s.pigments.count);
+                s.pigments[s.pigments.count++] = detail::readPigment(m["pigment"]);
+            }
         }
     }
 
@@ -261,6 +351,9 @@ inline std::string writeScene(const Scene& s, const std::string& sourceFile = {}
             {"emission", m.emission},
             {"texture", nullptr},
         });
+        if (m.textureId >= 0 && static_cast<std::uint32_t>(m.textureId) < s.pigments.count) {
+            mats.back()["pigment"] = detail::writePigment(s.pigments[m.textureId]);
+        }
     }
     j["materials"] = std::move(mats);
 

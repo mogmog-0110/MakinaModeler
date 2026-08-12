@@ -55,6 +55,39 @@ struct Material {
 static_assert(sizeof(Material) == 40);
 static_assert(std::is_trivially_copyable_v<Material>);
 
+/// What a POV-Ray pigment pattern is, as far as this renderer goes.
+///
+/// Only the patterns that are pure arithmetic. POV's noise-driven ones -- marble, wood, granite,
+/// bozo -- need POV's own permutation table to land on the same values, and a pattern that is
+/// merely "noise that looks similar" cannot be compared against the oracle at all. Adding them
+/// without that table would trade the one thing this renderer can claim for a texture that looks
+/// about right.
+enum class PigmentType : std::uint8_t {
+    None     = 0,
+    Checker  = 1,  ///< POV's checker: the parity of floor(x)+floor(y)+floor(z)
+    Gradient = 2,  ///< the fractional part along an axis
+    Radial   = 3,  ///< the angle about Y, which POV measures from -Z
+};
+
+/// A two-stop pigment. POV's color_map can hold more, and this is the shape of the common case.
+///
+/// Held as its own table rather than inline in Material because a pigment is a much bigger thing
+/// than a color and most materials do not have one -- and Scene is the engine's GameMemory, so
+/// every byte here is copied on every snapshot (History.hpp).
+struct Pigment {
+    std::uint8_t type;        ///< PigmentType
+    std::uint8_t _pad0[3];
+    float        a[3];        ///< the color at map position 0
+    float        b[3];        ///< the color at map position 1
+    /// Scale applied to the point before the pattern reads it, POV's `scale`.
+    float        scale[3];
+    float        translate[3];
+    /// Which axis a Gradient runs along, as a unit vector. POV takes a vector, not a name.
+    float        axis[3];
+};
+static_assert(sizeof(Pigment) == 64);
+static_assert(std::is_trivially_copyable_v<Pigment>);
+
 /// A node's name, boxed so it can live in a counted collection the engine's reflection understands.
 template <std::size_t N>
 struct NameSlot {
@@ -70,6 +103,8 @@ struct SceneStorage {
     static constexpr std::size_t kMaxNodes = MaxNodes;
     static constexpr std::size_t kMaxMaterials = MaxMaterials;
     static constexpr std::size_t kNameLen = NameLen;
+    /// One per material at most; a pigment belongs to exactly one.
+    static constexpr std::size_t kMaxPigments = MaxMaterials;
 
     /// Monotonic. Never hands out an id twice, so a stale reference reads as dangling rather
     /// than as a different node (CSG_NODE.md 6.3).
@@ -78,6 +113,8 @@ struct SceneStorage {
 
     FixedArray<CsgNode, MaxNodes>          nodes;
     FixedArray<Material, MaxMaterials>     materials;
+    /// Referenced by Material::textureId, which was already the slot for exactly this.
+    FixedArray<Pigment, MaxMaterials>      pigments;
     /// Indexed in step with nodes: entry i is the name of node i.
     FixedArray<NameSlot<NameLen>, MaxNodes> names;
 

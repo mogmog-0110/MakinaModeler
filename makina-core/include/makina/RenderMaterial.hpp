@@ -33,7 +33,9 @@ struct GpuMaterial {
     float brilliance;       float specular;
     float roughness;        float phong;
     float phongSize;        float metallic;
-    float emission;         float _pad;
+    /// Which pigment paints this surface, or -1. A float because it rides in a float struct and
+    /// the shader compares it against a count; the values are small integers either way.
+    float emission;         float textureIndex;
 };
 static_assert(sizeof(GpuMaterial) == 56, "GpuMaterial must match the HLSL declaration");
 static_assert(std::is_trivially_copyable_v<GpuMaterial>);
@@ -69,6 +71,7 @@ inline GpuMaterial defaultGpuMaterial() {
     g.phongSize = povDefaults::kPhongSize;
     g.metallic = povDefaults::kMetallic;
     g.emission = 0.0f;
+    g.textureIndex = -1.0f;
     return g;
 }
 
@@ -96,7 +99,18 @@ inline GpuMaterial toGpuMaterial(const Material& m) {
         g.roughness = 1.0e-4f;
     }
     g.emission = m.emission;
+    g.textureIndex = static_cast<float>(m.textureId);
     return g;
+}
+
+/// Every pigment in the scene, ready to upload beside the materials.
+inline std::vector<Pigment> gpuPigments(const Scene& s) {
+    std::vector<Pigment> out;
+    out.reserve(s.pigments.count);
+    for (std::uint32_t i = 0; i < s.pigments.count; ++i) {
+        out.push_back(s.pigments[i]);
+    }
+    return out;
 }
 
 /// Every material in the scene, in index order, ready to upload.

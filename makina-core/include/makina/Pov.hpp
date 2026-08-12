@@ -85,6 +85,48 @@ inline std::string silhouetteMaterial() {
     return "\tpigment{color rgb<1,1,1>}\n\tfinish{ambient 1 diffuse 0 specular 0}\n";
 }
 
+/// One pigment as a POV block.
+///
+/// The order of the modifiers matters and is POV's: the pattern, then its color_map, then the
+/// transform. POV applies `scale` and `translate` to the pattern in the order written, so putting
+/// translate first would move by unscaled units and the two renderers would disagree about where
+/// the pattern starts -- which looks like an offset bug rather than an ordering one.
+inline std::string povPigment(const Pigment& p) {
+    const char* pattern = "checker";
+    switch (static_cast<PigmentType>(p.type)) {
+        case PigmentType::Gradient: pattern = "gradient"; break;
+        case PigmentType::Radial:   pattern = "radial"; break;
+        default:                    pattern = "checker"; break;
+    }
+
+    std::string t = "\tpigment{\n\t\t" + std::string(pattern);
+    if (static_cast<PigmentType>(p.type) == PigmentType::Gradient) {
+        // POV's gradient takes the axis as a vector argument, not as a modifier.
+        t += " <" + num(p.axis[0]) + "," + num(p.axis[1]) + "," + num(p.axis[2]) + ">";
+    }
+    t += "\n";
+
+    if (static_cast<PigmentType>(p.type) == PigmentType::Checker) {
+        // checker takes two colors directly; giving it a color_map would make POV interpolate
+        // across a pattern that has no in-between, and the hard edge would go soft.
+        t += "\t\tcolor rgb<" + num(p.a[0]) + "," + num(p.a[1]) + "," + num(p.a[2]) + ">\n";
+        t += "\t\tcolor rgb<" + num(p.b[0]) + "," + num(p.b[1]) + "," + num(p.b[2]) + ">\n";
+    } else {
+        t += "\t\tcolor_map{\n";
+        t += "\t\t\t[0.0 color rgb<" + num(p.a[0]) + "," + num(p.a[1]) + "," + num(p.a[2]) +
+             ">]\n";
+        t += "\t\t\t[1.0 color rgb<" + num(p.b[0]) + "," + num(p.b[1]) + "," + num(p.b[2]) +
+             ">]\n";
+        t += "\t\t}\n";
+    }
+
+    t += "\t\tscale <" + num(p.scale[0]) + "," + num(p.scale[1]) + "," + num(p.scale[2]) + ">\n";
+    t += "\t\ttranslate <" + num(p.translate[0]) + "," + num(p.translate[1]) + "," +
+         num(p.translate[2]) + ">\n";
+    t += "\t}\n";
+    return t;
+}
+
 inline std::string povMaterial(const Scene& s, const CsgNode& n, bool silhouette) {
     if (silhouette) {
         return silhouetteMaterial();
@@ -96,8 +138,16 @@ inline std::string povMaterial(const Scene& s, const CsgNode& n, bool silhouette
     // POV's rgbf carries filter, not opacity, so the stored alpha is inverted; roughness is the
     // reciprocal sense of shininess. Both conversions are Grasp3D's and are what its .pov files
     // have always meant.
-    std::string t = "\tpigment{color rgbf<" + num(m.diffuse[0]) + "," + num(m.diffuse[1]) + "," +
-                    num(m.diffuse[2]) + "," + num(1.0 - m.alpha) + ">}\n";
+    // A pattern when the material names one, a flat color otherwise. Written in POV's own words,
+    // because the whole reason the renderer implements POV's patterns is so this file and the
+    // picture can be compared -- a pattern that cannot be exported cannot be checked.
+    std::string t;
+    if (m.textureId >= 0 && static_cast<std::uint32_t>(m.textureId) < s.pigments.count) {
+        t = povPigment(s.pigments[m.textureId]);
+    } else {
+        t = "\tpigment{color rgbf<" + num(m.diffuse[0]) + "," + num(m.diffuse[1]) + "," +
+            num(m.diffuse[2]) + "," + num(1.0 - m.alpha) + ">}\n";
+    }
     if (m.emission != 0.0f) {
         t += "\tinterior{media{emission rgb " + num(m.emission) + "}}\n";
     }
