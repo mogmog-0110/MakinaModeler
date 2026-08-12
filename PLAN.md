@@ -621,7 +621,10 @@ Phase 1 で BSP と POV 出力は既に実装済みなので、**比較ハーネ
       SDF↔POV-Ray はシルエット IoU 0.9949〜0.9996（`silhouette-check`）
 - [x] 閾値超えでレポートが出る
       — 許容量は**周長の倍数**（既定 2.0）。差分画像 `*_iou.bmp` も書く
-- [ ] CI で自動実行される — **未着手**（GitHub Actions。makina はまだ git リポジトリですらない）
+- [x] CI で自動実行される — ただし**限定つき**。
+      linux-gcc / windows-msvc / macos-clang で「Java も GPU も要らない検査」だけを走らせる。
+      Grasp3D との一致と POV-Ray との突き合わせは runner に道具が無いので `verify-all.bat` のまま。
+      **CI が緑でも移植の一致検証を通ったことにはならない**ので、ログにそう書き出している
 
 **実測でのずれと、その理由**:
 - 差分は必ず**マーチ側だけ**に出る（POV 側だけの画素は全シーンで 0）。
