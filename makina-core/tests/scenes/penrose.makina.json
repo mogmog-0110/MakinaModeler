@@ -1,0 +1,301 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "source": { "tool": "gsf2json", "file": "penrose.gsf" },
+  "nextId": 28,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "light_0": "enabled",
+    "light_1": "disabled",
+    "light_2": "disabled",
+    "light_3": "disabled",
+    "light_4": "disabled",
+    "light_5": "disabled",
+    "light_6": "disabled",
+    "light_7": "disabled",
+    "children": [
+      {
+        "id": 2,
+        "op": "Rotate",
+        "name": "Rotate",
+        "axis": "Y",
+        "degree": -13.474484139,
+        "children": [
+          {
+            "id": 3,
+            "op": "Label",
+            "name": "Label",
+            "label": "ペンローズの三角形"
+          },
+          {
+            "id": 4,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "X",
+            "degree": 1.146221388,
+            "children": [
+              {
+                "id": 5,
+                "op": "Translate",
+                "name": "Translate",
+                "x": -3.0,
+                "y": -3.0,
+                "z": -3.0,
+                "children": [
+                  {
+                    "id": 6,
+                    "op": "Translate",
+                    "name": "Translate",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "children": [
+                      {
+                        "id": 7,
+                        "op": "Label",
+                        "name": "Label",
+                        "label": "辺A +X"
+                      },
+                      {
+                        "id": 8,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 0.02,
+                        "y1": 0.02,
+                        "z1": 0.02,
+                        "x2": 0.98,
+                        "y2": 0.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 9,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 1.02,
+                        "y1": 0.02,
+                        "z1": 0.02,
+                        "x2": 1.98,
+                        "y2": 0.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 10,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 2.02,
+                        "y1": 0.02,
+                        "z1": 0.02,
+                        "x2": 2.98,
+                        "y2": 0.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 11,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 3.02,
+                        "y1": 0.02,
+                        "z1": 0.02,
+                        "x2": 3.98,
+                        "y2": 0.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 12,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 4.02,
+                        "y1": 0.02,
+                        "z1": 0.02,
+                        "x2": 4.98,
+                        "y2": 0.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 13,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 0.02,
+                        "z1": 0.02,
+                        "x2": 5.98,
+                        "y2": 0.98,
+                        "z2": 0.98
+                      }
+                    ]
+                  },
+                  {
+                    "id": 14,
+                    "op": "Translate",
+                    "name": "Translate",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "children": [
+                      {
+                        "id": 15,
+                        "op": "Label",
+                        "name": "Label",
+                        "label": "辺B +Y"
+                      },
+                      {
+                        "id": 16,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 1.02,
+                        "z1": 0.02,
+                        "x2": 5.98,
+                        "y2": 1.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 17,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 2.02,
+                        "z1": 0.02,
+                        "x2": 5.98,
+                        "y2": 2.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 18,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 3.02,
+                        "z1": 0.02,
+                        "x2": 5.98,
+                        "y2": 3.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 19,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 4.02,
+                        "z1": 0.02,
+                        "x2": 5.98,
+                        "y2": 4.98,
+                        "z2": 0.98
+                      },
+                      {
+                        "id": 20,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 5.02,
+                        "z1": 0.02,
+                        "x2": 5.98,
+                        "y2": 5.98,
+                        "z2": 0.98
+                      }
+                    ]
+                  },
+                  {
+                    "id": 21,
+                    "op": "Translate",
+                    "name": "Translate",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "children": [
+                      {
+                        "id": 22,
+                        "op": "Label",
+                        "name": "Label",
+                        "label": "辺C +Z"
+                      },
+                      {
+                        "id": 23,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 5.02,
+                        "z1": 1.02,
+                        "x2": 5.98,
+                        "y2": 5.98,
+                        "z2": 1.98
+                      },
+                      {
+                        "id": 24,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 5.02,
+                        "z1": 2.02,
+                        "x2": 5.98,
+                        "y2": 5.98,
+                        "z2": 2.98
+                      },
+                      {
+                        "id": 25,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 5.02,
+                        "z1": 3.02,
+                        "x2": 5.98,
+                        "y2": 5.98,
+                        "z2": 3.98
+                      },
+                      {
+                        "id": 26,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 5.02,
+                        "z1": 4.02,
+                        "x2": 5.98,
+                        "y2": 5.98,
+                        "z2": 4.98
+                      },
+                      {
+                        "id": 27,
+                        "op": "Box",
+                        "name": "Box",
+                        "material": 0,
+                        "x1": 5.02,
+                        "y1": 5.02,
+                        "z1": 5.02,
+                        "x2": 5.98,
+                        "y2": 5.98,
+                        "z2": 5.98
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    { "id": 0, "diffuse": [231, 223, 205], "alpha": 1.0, "ambient": 0.2, "specular": 0.05, "shininess": 4.0, "emission": 0.0, "texture": null }
+  ]
+}

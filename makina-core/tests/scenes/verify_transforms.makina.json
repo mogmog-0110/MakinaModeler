@@ -1,0 +1,231 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "source": { "tool": "gsf2json", "file": "verify_transforms.gsf" },
+  "nextId": 23,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "light_0": "enabled",
+    "light_1": "disabled",
+    "light_2": "disabled",
+    "light_3": "disabled",
+    "light_4": "disabled",
+    "light_5": "disabled",
+    "light_6": "disabled",
+    "light_7": "disabled",
+    "children": [
+      {
+        "id": 2,
+        "op": "Translate",
+        "name": "Translate",
+        "x": -7.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 3,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "X",
+            "degree": 37.0,
+            "children": [
+              {
+                "id": 4,
+                "op": "Box",
+                "name": "Box",
+                "material": 0,
+                "x1": 0.0,
+                "y1": 0.0,
+                "z1": 0.0,
+                "x2": 1.0,
+                "y2": 1.0,
+                "z2": 1.0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "op": "Translate",
+        "name": "Translate",
+        "x": -4.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 6,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "Y",
+            "degree": 37.0,
+            "children": [
+              {
+                "id": 7,
+                "op": "Box",
+                "name": "Box",
+                "material": 0,
+                "x1": 0.0,
+                "y1": 0.0,
+                "z1": 0.0,
+                "x2": 1.0,
+                "y2": 1.0,
+                "z2": 1.0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "op": "Translate",
+        "name": "Translate",
+        "x": -1.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 9,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "Z",
+            "degree": 37.0,
+            "children": [
+              {
+                "id": 10,
+                "op": "Box",
+                "name": "Box",
+                "material": 0,
+                "x1": 0.0,
+                "y1": 0.0,
+                "z1": 0.0,
+                "x2": 1.0,
+                "y2": 1.0,
+                "z2": 1.0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 2.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 12,
+            "op": "Scale",
+            "name": "Scale",
+            "x": 2.0,
+            "y": 0.5,
+            "z": 1.5,
+            "children": [
+              {
+                "id": 13,
+                "op": "Sphere",
+                "name": "Sphere",
+                "material": 0,
+                "radius": 0.8
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 14,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 5.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 15,
+            "op": "Scale",
+            "name": "Scale",
+            "x": -1.0,
+            "y": 1.0,
+            "z": 1.0,
+            "children": [
+              {
+                "id": 16,
+                "op": "Cone",
+                "name": "Cone",
+                "material": 0,
+                "radius": 0.8,
+                "height": 1.5
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 17,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 8.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 18,
+            "op": "Cone",
+            "name": "Cone",
+            "material": 0,
+            "radius": 0.8,
+            "height": -1.5
+          }
+        ]
+      },
+      {
+        "id": 19,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 11.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 20,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "Y",
+            "degree": 40.0,
+            "children": [
+              {
+                "id": 21,
+                "op": "Scale",
+                "name": "Scale",
+                "x": 1.5,
+                "y": 1.0,
+                "z": 1.0,
+                "children": [
+                  {
+                    "id": 22,
+                    "op": "Cylinder",
+                    "name": "Cylinder",
+                    "material": 0,
+                    "capPoint": 1.0,
+                    "basePoint": -1.0,
+                    "radius": 0.5
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    { "id": 0, "diffuse": [255, 255, 0], "alpha": 1.0, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null }
+  ]
+}

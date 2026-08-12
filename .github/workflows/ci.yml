@@ -1,0 +1,55 @@
+name: makina-core
+
+# Only the checks that compare our code against our code.
+#
+# The port's agreement with Grasp3D needs a JDK, the Grasp3D classes and POV-Ray, and the silhouette
+# comparison needs a GPU. None of that is on a runner, and faking it would produce a green tick that
+# means less than it looks like. Those run locally through verify-all.bat.
+#
+# What is worth running here is the other half: does makina-core still build where nothing about
+# this machine is true. It claims to be header-only and to depend on nothing but the standard
+# library, and the only way to keep that claim honest is to compile it somewhere else.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-gcc
+          - os: windows-latest
+            name: windows-msvc
+          - os: macos-latest
+            name: macos-clang
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S makina-core -B makina-core/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build makina-core/build --config Release --parallel
+
+      # ctest already knows which checks need nothing but this repository, and with which
+      # scenes. Repeating that here would be a second list to keep in step with the first.
+      - name: Test
+        run: ctest --test-dir makina-core/build -C Release --output-on-failure
+
+      # A reminder in the log, so a green tick is not read as more than it is.
+      - name: What this run did not check
+        if: always()
+        shell: bash
+        run: |
+          echo "Not checked here: agreement with Grasp3D (needs a JDK and the Grasp3D classes),"
+          echo "the POV export (needs POV-Ray) and the silhouette comparison (needs a GPU)."
+          echo "Run verify-all.bat locally for those."

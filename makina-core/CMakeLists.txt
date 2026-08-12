@@ -51,10 +51,19 @@ foreach(t roundtrip sdf_compare measure_compare pov_compare bsp_compare edit_che
     endif()
 endforeach()
 
-# The converted Grasp3D scenes are the corpus. tools/gsf2json must have been run first.
-file(GLOB SCENE_JSON "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gsf2json/out/*.makina.json")
-if(SCENE_JSON)
-    add_test(NAME roundtrip COMMAND roundtrip ${SCENE_JSON})
+# ctest runs the checks that need nothing but this repository: our code against our code. The
+# scenes are the committed fixtures, not the generated corpus, so `ctest` works on a fresh clone
+# and in CI where Grasp3D and a JDK are not present.
+#
+# The comparisons against the Java reference are deliberately absent here. They need dumps that
+# tools/*/out produces, and those are rebuilt from the .gsf files every run -- which is the only
+# thing that keeps them from going stale. build-and-test.bat is where they run.
+file(GLOB FIXTURE_SCENES "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/*.makina.json")
+if(FIXTURE_SCENES)
+    add_test(NAME roundtrip COMMAND roundtrip ${FIXTURE_SCENES})
+    add_test(NAME bsp_compare COMMAND bsp_compare ${FIXTURE_SCENES})
+    add_test(NAME edit_check COMMAND edit_check ${FIXTURE_SCENES})
+    add_test(NAME command_check COMMAND command_check ${FIXTURE_SCENES})
 else()
-    message(WARNING "No converted scenes found. Run tools/gsf2json/build-and-run.bat first.")
+    message(WARNING "tests/scenes holds no scenes; ctest will have nothing to run")
 endif()

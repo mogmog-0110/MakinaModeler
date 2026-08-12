@@ -1,0 +1,779 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "source": { "tool": "gsf2json", "file": "pettobotoru.gsf" },
+  "nextId": 88,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "light_0": "enabled",
+    "light_1": "enabled",
+    "light_2": "disabled",
+    "light_3": "disabled",
+    "light_4": "disabled",
+    "light_5": "disabled",
+    "light_6": "disabled",
+    "light_7": "disabled",
+    "children": [
+      {
+        "id": 2,
+        "op": "Label",
+        "name": "Label",
+        "label": "table"
+      },
+      {
+        "id": 3,
+        "op": "Merge",
+        "name": "Merge",
+        "children": [
+          {
+            "id": 4,
+            "op": "Translate",
+            "name": "Translate",
+            "x": 0.0,
+            "y": 3.0987,
+            "z": 0.0,
+            "children": [
+              {
+                "id": 5,
+                "op": "Difference",
+                "name": "Difference",
+                "children": [
+                  {
+                    "id": 6,
+                    "op": "Difference",
+                    "name": "Difference",
+                    "children": [
+                      {
+                        "id": 7,
+                        "op": "Cone",
+                        "name": "Cone",
+                        "material": 0,
+                        "radius": 0.999664035,
+                        "height": 1.0
+                      },
+                      {
+                        "id": 8,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.1,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 9,
+                            "op": "Cone",
+                            "name": "Cone",
+                            "material": 0,
+                            "radius": 0.999664035,
+                            "height": 1.0
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": 10,
+                    "op": "Cylinder",
+                    "name": "Cylinder",
+                    "material": 1,
+                    "capPoint": 1.0,
+                    "basePoint": -1.0,
+                    "radius": 0.3
+                  }
+                ]
+              },
+              {
+                "id": 11,
+                "op": "Cylinder",
+                "name": "Cylinder",
+                "material": 0,
+                "capPoint": 0.8,
+                "basePoint": 0.6801,
+                "radius": 0.3
+              },
+              {
+                "id": 12,
+                "op": "Cylinder",
+                "name": "Cylinder",
+                "material": 0,
+                "capPoint": 0.85,
+                "basePoint": 0.8,
+                "radius": 0.4
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "op": "Difference",
+            "name": "Difference",
+            "children": [
+              {
+                "id": 14,
+                "op": "Difference",
+                "name": "Difference",
+                "children": [
+                  {
+                    "id": 15,
+                    "op": "Cylinder",
+                    "name": "Cylinder",
+                    "material": 0,
+                    "capPoint": 3.13,
+                    "basePoint": -1.0,
+                    "radius": 1.0
+                  },
+                  {
+                    "id": 16,
+                    "op": "Merge",
+                    "name": "Merge",
+                    "children": [
+                      {
+                        "id": 17,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.7,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 18,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 19,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.4,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 20,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 21,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.1,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 22,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 23,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 0.2,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 24,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 25,
+                        "op": "Label",
+                        "name": "Label",
+                        "label": "mizo",
+                        "children": [
+                          {
+                            "id": 26,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 0.9,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 27,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.154989055,
+                                "minorRadius": 0.3
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "id": 28,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 1.562676242,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 29,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 30,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 1.890838253,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 31,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 32,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 2.2,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 33,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 34,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 2.51559,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 35,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": 36,
+                "op": "Scale",
+                "name": "Scale",
+                "x": 0.9,
+                "y": 1.0,
+                "z": 0.9,
+                "children": [
+                  {
+                    "id": 37,
+                    "op": "Difference",
+                    "name": "Difference",
+                    "children": [
+                      {
+                        "id": 38,
+                        "op": "Cylinder",
+                        "name": "Cylinder",
+                        "material": 2,
+                        "capPoint": 3.13,
+                        "basePoint": -1.0,
+                        "radius": 1.0
+                      },
+                      {
+                        "id": 39,
+                        "op": "Merge",
+                        "name": "Merge",
+                        "children": [
+                          {
+                            "id": 40,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": -0.7,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 41,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 42,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": -0.4,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 43,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 44,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": -0.1,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 45,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 46,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 0.2,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 47,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 48,
+                            "op": "Label",
+                            "name": "Label",
+                            "label": "mizo",
+                            "children": [
+                              {
+                                "id": 49,
+                                "op": "Translate",
+                                "name": "Translate",
+                                "x": 0.0,
+                                "y": 0.9,
+                                "z": 0.0,
+                                "children": [
+                                  {
+                                    "id": 50,
+                                    "op": "Torus",
+                                    "name": "Torus",
+                                    "material": 1,
+                                    "majorRadius": 1.154989055,
+                                    "minorRadius": 0.3
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "id": 51,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 1.562676242,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 52,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 53,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 1.890838253,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 54,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 55,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 2.2,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 56,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          },
+                          {
+                            "id": 57,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 2.51559,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 58,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.0,
+                                "minorRadius": 0.1
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 59,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 0.0,
+        "y": 3.13,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 60,
+            "op": "Difference",
+            "name": "Difference",
+            "children": [
+              {
+                "id": 61,
+                "op": "Cylinder",
+                "name": "Cylinder",
+                "material": 3,
+                "capPoint": 1.1979,
+                "basePoint": 0.85,
+                "radius": 0.3
+              },
+              {
+                "id": 62,
+                "op": "Cylinder",
+                "name": "Cylinder",
+                "material": 1,
+                "capPoint": 0.9,
+                "basePoint": 0.88,
+                "radius": 0.3
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 63,
+        "op": "Intersection",
+        "name": "Intersection",
+        "children": [
+          {
+            "id": 64,
+            "op": "Scale",
+            "name": "Scale",
+            "x": 0.81,
+            "y": 1.0,
+            "z": 0.81,
+            "children": [
+              {
+                "id": 65,
+                "op": "Difference",
+                "name": "Difference",
+                "children": [
+                  {
+                    "id": 66,
+                    "op": "Cylinder",
+                    "name": "Cylinder",
+                    "material": 4,
+                    "capPoint": 3.13,
+                    "basePoint": -1.0,
+                    "radius": 1.0
+                  },
+                  {
+                    "id": 67,
+                    "op": "Merge",
+                    "name": "Merge",
+                    "children": [
+                      {
+                        "id": 68,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.7,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 69,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 70,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.4,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 71,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 72,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": -0.1,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 73,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 74,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 0.2,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 75,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 76,
+                        "op": "Label",
+                        "name": "Label",
+                        "label": "mizo",
+                        "children": [
+                          {
+                            "id": 77,
+                            "op": "Translate",
+                            "name": "Translate",
+                            "x": 0.0,
+                            "y": 0.9,
+                            "z": 0.0,
+                            "children": [
+                              {
+                                "id": 78,
+                                "op": "Torus",
+                                "name": "Torus",
+                                "material": 1,
+                                "majorRadius": 1.154989055,
+                                "minorRadius": 0.3
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "id": 79,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 1.562676242,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 80,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 81,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 1.890838253,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 82,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 83,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 2.2,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 84,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      },
+                      {
+                        "id": 85,
+                        "op": "Translate",
+                        "name": "Translate",
+                        "x": 0.0,
+                        "y": 2.51559,
+                        "z": 0.0,
+                        "children": [
+                          {
+                            "id": 86,
+                            "op": "Torus",
+                            "name": "Torus",
+                            "material": 1,
+                            "majorRadius": 1.0,
+                            "minorRadius": 0.1
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 87,
+            "op": "Cylinder",
+            "name": "Cylinder",
+            "material": 5,
+            "capPoint": 1.020754694,
+            "basePoint": -1.0,
+            "radius": 1.0
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    { "id": 0, "diffuse": [255, 255, 255], "alpha": 0.1, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null },
+    { "id": 1, "diffuse": [255, 255, 0], "alpha": 1.0, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null },
+    { "id": 2, "diffuse": [255, 0, 0], "alpha": 1.0, "ambient": 0.0, "specular": 0.0, "shininess": 1.0, "emission": 0.1, "texture": "" },
+    { "id": 3, "diffuse": [255, 255, 255], "alpha": 1.0, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null },
+    { "id": 4, "diffuse": [204, 255, 255], "alpha": 0.3, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null },
+    { "id": 5, "diffuse": [153, 255, 255], "alpha": 0.3, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "source": { "tool": "gsf2json", "file": "verify_faces.gsf" },
+  "nextId": 8,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "light_0": "enabled",
+    "light_1": "disabled",
+    "light_2": "disabled",
+    "light_3": "disabled",
+    "light_4": "disabled",
+    "light_5": "disabled",
+    "light_6": "disabled",
+    "light_7": "disabled",
+    "children": [
+      {
+        "id": 2,
+        "op": "Translate",
+        "name": "Translate",
+        "x": -3.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 3,
+            "op": "Disc",
+            "name": "Disc",
+            "material": 0,
+            "radius": 1.0,
+            "holeRadius": 0.0
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 5,
+            "op": "Disc",
+            "name": "Disc",
+            "material": 0,
+            "radius": 1.0,
+            "holeRadius": 0.4
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "op": "Translate",
+        "name": "Translate",
+        "x": 3.0,
+        "y": 0.0,
+        "z": 0.0,
+        "children": [
+          {
+            "id": 7,
+            "op": "Triangle",
+            "name": "Triangle",
+            "material": 0,
+            "x1": 0.0,
+            "y1": 1.2,
+            "z1": 0.0,
+            "x2": -1.0,
+            "y2": -0.6,
+            "z2": 0.5,
+            "x3": 1.0,
+            "y3": -0.6,
+            "z3": -0.5
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    { "id": 0, "diffuse": [255, 255, 0], "alpha": 1.0, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null }
+  ]
+}

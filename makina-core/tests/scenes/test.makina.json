@@ -1,0 +1,39 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "source": { "tool": "gsf2json", "file": "test.gsf" },
+  "nextId": 3,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "light_0": "enabled",
+    "light_1": "disabled",
+    "light_2": "disabled",
+    "light_3": "disabled",
+    "light_4": "disabled",
+    "light_5": "disabled",
+    "light_6": "disabled",
+    "light_7": "disabled",
+    "children": [
+      {
+        "id": 2,
+        "op": "Box",
+        "name": "Box",
+        "material": 0,
+        "x1": -0.5,
+        "y1": -0.5,
+        "z1": -0.5,
+        "x2": 0.5,
+        "y2": 0.5,
+        "z2": 0.5
+      }
+    ]
+  },
+  "materials": [
+    { "id": 0, "diffuse": [255, 255, 0], "alpha": 1.0, "ambient": 0.1, "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null }
+  ]
+}
