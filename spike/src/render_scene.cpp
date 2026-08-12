@@ -25,6 +25,50 @@
 
 namespace {
 
+/// The one light this renderer has, as a unit vector pointing the way the light travels.
+///
+/// In one function because the .pov written for a comparison has to place its light from the same
+/// numbers. Two copies of a direction is how a color comparison ends up measuring a light that
+/// moved rather than a shading model that differs.
+inline void lightDirection(float out[3]) {
+    out[0] = -0.45f;
+    out[1] = -0.78f;
+    out[2] = -0.44f;
+    const float len = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    for (int i = 0; i < 3; ++i) {
+        out[i] /= len;
+    }
+}
+
+/// The POV preamble that asks for the same lighting the shader computes.
+///
+/// Every line here is a difference that would otherwise show up in the comparison and be blamed on
+/// the shading model:
+///
+///   assumed_gamma 1.0   shading happens in linear light on both sides. Without it POV works in
+///                       gamma space and every mid-tone drifts.
+///   shadowless          the shader casts none. Leaving POV's on would put every shadow into the
+///                       difference, which says nothing about whether finish{} agrees.
+///   a distant light     the shader's light is directional. POV has no such thing, so it gets a
+///                       point light far enough away that the rays are parallel to within a pixel.
+///   no ambient_light    left at POV's default rgb<1,1,1>, which is what mkAmbientTerm assumes.
+inline std::string povMatchPreamble(const float light[3]) {
+    // Far enough that the spread across a scene-sized object is well under a degree, and POV
+    // applies no falloff without fade_power, so the distance costs nothing in brightness.
+    constexpr double kDistance = 1.0e4;
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+                  "global_settings{ assumed_gamma 1.0 }\n"
+                  "background{ color rgb<0,0,0> }\n"
+                  "light_source{\n"
+                  "\t<%.9g, %.9g, %.9g>\n"
+                  "\tcolor rgb<1,1,1>\n"
+                  "\tshadowless\n"
+                  "}\n",
+                  -light[0] * kDistance, -light[1] * kDistance, -light[2] * kDistance);
+    return buf;
+}
+
 // Must match cbuffer Params in scene_prelude.hlsl.
 struct alignas(256) FrameParams {
     float eye[3];       float tanHalfFov;
@@ -35,7 +79,7 @@ struct alignas(256) FrameParams {
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
     std::uint32_t programCount;  std::uint32_t materialCount;
-    std::uint32_t pigmentCount;  std::uint32_t pad;
+    std::uint32_t pigmentCount;  std::uint32_t povMatch;
     // Only the interactive viewport highlights a selection; zero here means "nothing selected",
     // which is what every offscreen render wants.
     float selMin[3];    float selValid;
@@ -78,6 +122,16 @@ void cross3(const float a[3], const float b[3], float out[3]) {
 bool hasUnboundedPrimitive(const makina::Scene& s) {
     for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
         if (static_cast<makina::Op>(s.nodes[i].op) == makina::Op::Plane) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Whether any material lets light through. POV traces on; this renderer stops at the surface.
+bool hasTransparentMaterial(const makina::Scene& s) {
+    for (std::uint32_t i = 0; i < s.materials.count; ++i) {
+        if (s.materials[i].alpha < 0.999f) {
             return true;
         }
     }
@@ -132,8 +186,8 @@ FrameParams frameScene(const makina::Aabb& box, int width, int height, std::uint
     p.aspect = static_cast<float>(width) / static_cast<float>(height);
     p.maxSteps = maxSteps;
 
-    float light[3] = {-0.45f, -0.78f, -0.44f};
-    normalize3(light);
+    float light[3];
+    lightDirection(light);
     std::memcpy(p.lightDir, light, sizeof(light));
 
     p.stepScale = 0.85f;
@@ -274,6 +328,11 @@ int main(int argc, char** argv) {
     // POV-Ray's render of the same scene, and the two have to share one camera. Deriving the
     // camera twice is how a silhouette comparison ends up measuring a camera mismatch.
     bool writePov = false;
+    // Renders the shaded picture *and* the .pov that should match it, from one camera and one set
+    // of light directions. The point is to compare colors, which only means anything if the two
+    // are asked for the same thing -- so this mode also turns off the terms POV has no equivalent
+    // for (scene_prelude.hlsl, gPovMatch).
+    bool povMatch = false;
     // Loop over a buffered program instead of generating straight-line code. Slower, but the
     // shader is the same for every scene -- which is what a runtime that cannot ship a shader
     // compiler needs (PLAN.md D-04).
@@ -289,6 +348,7 @@ int main(int argc, char** argv) {
         else if (a == "--weathered") { shading = "scene_weathered.hlsl"; prefix = "weathered"; }
         else if (a == "--fields") { shading = "scene_fields_debug.hlsl"; prefix = "field"; debugSweep = true; }
         else if (a == "--mask") { shading = "scene_mask.hlsl"; prefix = "mask"; writePov = true; }
+        else if (a == "--pov-match") { prefix = "shaded"; writePov = true; povMatch = true; }
         else if (a == "--interpret") { interpret = true; prefix = "interp"; }
         else scenes.push_back(a);
     }
@@ -333,7 +393,14 @@ int main(int argc, char** argv) {
                     continue;
                 }
 
-                if (writePov && hasUnboundedPrimitive(scene)) {
+                if (povMatch && hasTransparentMaterial(scene)) {
+                    // Not a tolerance problem and not a bug: this renderer has no transparency at
+                    // all. The march stops at the first surface, so an alpha of 0.1 draws as if it
+                    // were 1.0 while POV traces on through and shows what is behind. Comparing the
+                    // two would measure a feature that is missing, which the number cannot say.
+                    std::printf("    no .pov: the scene has a see-through material and this "
+                                "renderer stops at the first surface\n");
+                } else if (writePov && hasUnboundedPrimitive(scene)) {
                     // POV-Ray has no far plane; the march does. An infinite Plane therefore fills
                     // POV's frame and stops at a circle in ours, and the comparison measures the
                     // far distance rather than the geometry. Skipping is the honest answer -- the
@@ -343,8 +410,13 @@ int main(int argc, char** argv) {
                 } else if (writePov) {
                     const FrameParams fp = frameScene(bounds.box, width, height, maxSteps);
                     makina::PovOptions po;
-                    po.silhouette = true;
+                    po.silhouette = !povMatch;
                     po.title = tag;
+                    if (povMatch) {
+                        float light[3];
+                        lightDirection(light);
+                        po.preamble = povMatchPreamble(light);
+                    }
                     for (int k = 0; k < 3; ++k) {
                         po.camera.eye[k] = fp.eye[k];
                         po.camera.lookAt[k] = fp.eye[k] + fp.forward[k];
@@ -353,7 +425,8 @@ int main(int argc, char** argv) {
                     po.camera.fovY = 2.0 * std::atan(fp.tanHalfFov) * 180.0 / 3.14159265358979323846;
                     po.camera.aspect = fp.aspect;
 
-                    const std::string povPath = exeDir + "/mask_" + tag + ".pov";
+                    const std::string povPath =
+                        exeDir + "/" + (povMatch ? "shaded_" : "mask_") + tag + ".pov";
                     std::ofstream pov(povPath, std::ios::binary);
                     pov << makina::writePov(scene, po);
                     std::printf("    wrote %s\n", povPath.c_str());
@@ -394,6 +467,12 @@ int main(int argc, char** argv) {
                     params.nodeCount = static_cast<std::uint32_t>(prog.nodes.size());
                     params.materialCount = scene.materials.count;
                     params.pigmentCount = scene.pigments.count;
+                    params.povMatch = povMatch ? 1u : 0u;
+                    if (povMatch) {
+                        // POV has no ambient occlusion at all. Leaving it on would darken every
+                        // crease on one side only.
+                        params.enableAo = 0u;
+                    }
                     params.debugMode = debugSweep ? static_cast<std::uint32_t>(pass + 1) : 0u;
 
                     params.programCount = static_cast<std::uint32_t>(prog.nodes.size());

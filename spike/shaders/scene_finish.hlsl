@@ -85,10 +85,19 @@ float3 mkFinish(MkMaterial m, float3 n, float3 l, float3 v, float3 lightColor) {
 
     if (m.specular > 0.0 && ndl > 0.0) {
         const float3 h = normalize(l + v);
-        // POV: the exponent is derived from roughness, not stored. Guarded because a roughness of
-        // zero is a legal thing to type and would divide by it.
-        const float e = 2.0 / max(m.roughness * m.roughness, 1e-6) - 2.0;
-        col += highlight * m.specular * pow(saturate(dot(n, h)), e) * lightColor;
+        const float ca = dot(n, h);
+        if (ca > 0.0) {
+            // POV's specular is a Gaussian in the *angle*, not a power of the cosine:
+            //
+            //     exp(-(acos(N.H) / roughness)^2)
+            //
+            // Converting roughness to a Blinn-Phong exponent was the first attempt and it is
+            // measurably wrong. At roughness 0.6875 the power version is nearly flat across the
+            // whole surface, so it lifted every pixel: the pixel comparison put our dark checker
+            // squares at 100 where POV had 76, uniformly, on every square of one colour.
+            const float x = acos(saturate(ca)) / max(m.roughness, 1e-6);
+            col += highlight * m.specular * exp(-x * x) * lightColor;
+        }
     }
 
     if (m.phong > 0.0 && ndl > 0.0) {

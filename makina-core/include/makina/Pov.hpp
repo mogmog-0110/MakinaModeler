@@ -305,9 +305,20 @@ inline std::string povSubtree(const Scene& s, std::uint16_t index, const std::st
     }
 
     if (isBoolean(op)) {
-        // Only where no material was written onto the blades: POV then has to decide the cut
-        // surface itself, and cutaway_textures is the only way to ask it to.
-        if (op == Op::Intersection || (op == Op::Difference && blade.empty())) {
+        // A material on the boolean itself, which POV takes as the texture of the whole result.
+        //
+        // This was missing until a scene put one there. Every Grasp3D file carries materials on
+        // primitives, so the export never had to write one here -- but the renderer resolves a
+        // surface's material by walking up the tree, so it painted the solid and the .pov did not.
+        // The pixel comparison is what turned that into a visible difference rather than a
+        // difference nobody looked at.
+        const std::string own = povMaterial(s, n, silhouette);
+        out += own;
+
+        // cutaway_textures only where POV is being left to decide the cut surface: with a texture
+        // on the boolean there is nothing to decide, and asking anyway makes POV prefer the
+        // components' textures -- of which there are none.
+        if (own.empty() && (op == Op::Intersection || (op == Op::Difference && blade.empty()))) {
             out += "cutaway_textures\n";
         }
         // No transform on a boolean. Every leaf inside already carries the whole block, this

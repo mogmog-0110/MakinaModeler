@@ -113,6 +113,13 @@ if(MSVC)
     target_compile_options(silhouette_compare PRIVATE /W4 /permissive- /utf-8)
 endif()
 
+# The other half of the same comparison: same shape, and now the same colors on it.
+add_executable(color_compare src/color_compare.cpp)
+target_include_directories(color_compare PRIVATE src)
+if(MSVC)
+    target_compile_options(color_compare PRIVATE /W4 /permissive- /utf-8)
+endif()
+
 if(MSVC)
     # /utf-8: sources are UTF-8 but MSVC otherwise assumes the ANSI code page (932 here) and
     # warns C4819. /wd4324 silences the expected padding from alignas(256) on the constant buffer.

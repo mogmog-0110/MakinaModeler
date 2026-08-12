@@ -17,7 +17,14 @@ cbuffer Params : register(b0) {
     float3 gLightDir;   float gStepScale;
     float  gFarDist;    uint  gEnableAO;  uint gDebugMode;  float gGroundY;
     float3 gCenter;     float gSceneRadius;
-    uint   gProgramCount; uint gMaterialCount; uint gPigmentCount; uint _cbPad;
+    uint   gProgramCount; uint gMaterialCount; uint gPigmentCount;
+    /// Drops everything POV-Ray has no equivalent for -- the rim term and the sky background.
+    ///
+    /// Set only by the pass that is about to be compared against a POV render. Those terms are
+    /// there because they make a modelling viewport readable, not because they are physics, and
+    /// leaving them in would put a difference in every pixel that the comparison would then have
+    /// to be loosened to forgive.
+    uint   gPovMatch;
     // Selection highlight, as a world box. The viewport sets it; the offscreen renderer leaves
     // gSelValid at zero, so both use the same layout and the same generated shaders.
     float3 gSelMin;     float gSelValid;

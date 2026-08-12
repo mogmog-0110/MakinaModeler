@@ -63,6 +63,9 @@ float4 PSMain(VSOut i) : SV_Target {
     }
 
     if (!hit) {
+        if (gPovMatch != 0u) {
+            return float4(0, 0, 0, 1);   // POV's default background
+        }
         float sky = 0.28 + 0.32 * (1.0 - i.uv.y);
         return float4(sky * 0.55, sky * 0.62, sky * 0.78, 1.0);
     }
@@ -85,8 +88,12 @@ float4 PSMain(VSOut i) : SV_Target {
     // one place the two are supposed to be comparable.
     float3 col = mkAmbientTerm(mat, ao) + mkFinish(mat, n, -gLightDir, -rd, float3(1, 1, 1)) * ao;
 
-    float rim = pow(1.0 - saturate(dot(n, -rd)), 3.0);
-    col += rim * 0.16;
+    if (gPovMatch == 0u) {
+        // Edge lift, so a silhouette stays legible against the sky. Pure presentation -- POV has
+        // no such term, so it goes when the two are being compared.
+        float rim = pow(1.0 - saturate(dot(n, -rd)), 3.0);
+        col += rim * 0.16;
+    }
 
     // Selection: tint whatever is inside the selected subtree's world box.
     //
@@ -104,7 +111,15 @@ float4 PSMain(VSOut i) : SV_Target {
         }
     }
 
-    return float4(pow(saturate(col), 1.0 / 2.2), 1.0);
+    // sRGB, not a 2.2 power. POV-Ray 3.7 writes 8-bit files sRGB-encoded, so a plain 1/2.2 would
+    // put a systematic difference in the darks -- small, everywhere, and exactly the kind of thing
+    // a comparison gets loosened to forgive rather than fixed.
+    // step/lerp rather than a ternary: HLSL 2021 refuses a vector condition on ?:, and writing it
+    // per channel would be three copies of one rule.
+    const float3 c = saturate(col);
+    const float3 lo = c * 12.92;
+    const float3 hi = 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+    return float4(lerp(lo, hi, step(0.0031308, c)), 1.0);
 }
 
 #endif  // MAKINA_SCENE_SHADING_HLSL
