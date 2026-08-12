@@ -23,7 +23,8 @@
 /// Must match makina::EvalNode byte for byte (Flatten.hpp asserts the size on the CPU side).
 struct EvalNode {
     uint  op;
-    uint3 _pad;
+    uint  materialId;
+    uint2 _pad;
     float4 params;
     float4 inv0;
     float4 inv1;
@@ -88,6 +89,78 @@ float evalCsg(float3 wp) {
     }
 
     return stack[0];
+}
+
+/// The same walk, carrying which material won.
+///
+/// Separate from evalCsg for the reason the generated shader has two functions: the march calls
+/// the first thousands of times per pixel and this one once. Here the cost is a second stack,
+/// which is a second `alloca` -- so calling this per step would be worse than in generated code,
+/// not better.
+///
+/// The boolean rules match scene_codegen.hpp exactly, including Difference keeping the left
+/// operand's material for the cut surface. Two implementations of the same rule is the risk this
+/// project is built to catch, and the interpreted and generated pictures are compared for it.
+float2 evalCsgMaterial(float3 wp) {
+    if (gProgramCount == 0u) {
+        return float2(1.0e30, 255.0);
+    }
+
+    float stack[MK_STACK_MAX];
+    float ids[MK_STACK_MAX];
+    int sp = 0;
+
+    for (uint i = 0u; i < gProgramCount; ++i) {
+        EvalNode n = gProgram[i];
+
+        if (n.op >= 16u) {
+            float b = stack[sp - 1];
+            float a = stack[sp - 2];
+            float ib = ids[sp - 1];
+            float ia = ids[sp - 2];
+            sp -= 2;
+            float r;
+            float id;
+            if (n.op == 16u) {
+                r = min(a, b);
+                id = a < b ? ia : ib;
+            } else if (n.op == 17u) {
+                r = max(a, -b);
+                id = ia;
+            } else {
+                r = max(a, b);
+                id = a > b ? ia : ib;
+            }
+            stack[sp] = r;
+            ids[sp] = id;
+            ++sp;
+            continue;
+        }
+
+        const float4 w = float4(wp, 1.0);
+        const float3 p = float3(dot(n.inv0, w), dot(n.inv1, w), dot(n.inv2, w));
+
+        float d;
+        if (n.op == 0u) {
+            d = mkSdSphere(p.x, p.y, p.z, n.params.x);
+        } else if (n.op == 1u) {
+            d = mkSdBoxCentered(p.x, p.y, p.z, n.params.x, n.params.y, n.params.z);
+        } else if (n.op == 2u) {
+            d = mkSdCylinderCentered(p.x, p.y, p.z, n.params.x, n.params.y);
+        } else if (n.op == 3u) {
+            d = mkSdConeCentered(p.x, p.y * n.params.z, p.z, n.params.x, n.params.y);
+        } else if (n.op == 4u) {
+            d = mkSdTorus(p.x, p.y, p.z, n.params.x, n.params.y);
+        } else {
+            d = mkSdPlane(p.y, 0.0);
+        }
+
+        stack[sp] = d * n.params.w;
+        ids[sp] = (float)n.materialId;
+        ++sp;
+    }
+
+    return float2(stack[0], ids[0]);
 }
 
 #endif  // MAKINA_SCENE_INTERPRET_HLSL

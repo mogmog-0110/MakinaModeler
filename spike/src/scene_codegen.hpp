@@ -25,6 +25,52 @@ inline std::string flt(float v) {
     return buf;
 }
 
+/// Writes the two lines a primitive needs: the point in its local frame, and its distance.
+///
+/// Shared by both generated functions rather than copied, so the distance a material is attached
+/// to is the same expression the march walked. `prefix` keeps the two functions' locals apart.
+inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n, std::size_t i,
+                               const char* prefix) {
+    const std::string p = std::string(prefix) + "p" + std::to_string(i);
+    const std::string var = std::string(prefix) + "t" + std::to_string(i);
+
+    o << "    float3 " << p << " = float3(";
+    for (int r = 0; r < 3; ++r) {
+        o << "dot(float4(" << flt(n.inv[r * 4 + 0]) << ", " << flt(n.inv[r * 4 + 1]) << ", "
+          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(wp, 1.0))"
+          << (r < 2 ? ", " : "");
+    }
+    o << ");\n";
+
+    o << "    float " << var << " = (";
+    switch (static_cast<makina::EvalOp>(n.op)) {
+        case makina::EvalOp::Sphere:
+            o << "mkSdSphere(" << p << ".x, " << p << ".y, " << p << ".z, " << flt(n.params[0])
+              << ")";
+            break;
+        case makina::EvalOp::BoxCentered:
+            o << "mkSdBoxCentered(" << p << ".x, " << p << ".y, " << p << ".z, "
+              << flt(n.params[0]) << ", " << flt(n.params[1]) << ", " << flt(n.params[2]) << ")";
+            break;
+        case makina::EvalOp::CylinderCentered:
+            o << "mkSdCylinderCentered(" << p << ".x, " << p << ".y, " << p << ".z, "
+              << flt(n.params[0]) << ", " << flt(n.params[1]) << ")";
+            break;
+        case makina::EvalOp::ConeCentered:
+            o << "mkSdConeCentered(" << p << ".x, " << p << ".y * " << flt(n.params[2]) << ", "
+              << p << ".z, " << flt(n.params[0]) << ", " << flt(n.params[1]) << ")";
+            break;
+        case makina::EvalOp::Torus:
+            o << "mkSdTorus(" << p << ".x, " << p << ".y, " << p << ".z, " << flt(n.params[0])
+              << ", " << flt(n.params[1]) << ")";
+            break;
+        default:
+            o << "mkSdPlane(" << p << ".y, 0.0)";
+            break;
+    }
+    o << ") * " << flt(n.params[3]) << ";\n";
+}
+
 }  // namespace detail
 
 inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
@@ -64,44 +110,80 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
             continue;
         }
 
-        const std::string p = "p" + std::to_string(i);
-        o << "    float3 " << p << " = float3(";
-        for (int r = 0; r < 3; ++r) {
-            o << "dot(float4(" << detail::flt(n.inv[r * 4 + 0]) << ", "
-              << detail::flt(n.inv[r * 4 + 1]) << ", " << detail::flt(n.inv[r * 4 + 2]) << ", "
-              << detail::flt(n.inv[r * 4 + 3]) << "), float4(wp, 1.0))" << (r < 2 ? ", " : "");
-        }
-        o << ");\n";
+        detail::emitPrimitiveLines(o, n, i, "");
+        stack.push_back(var);
+    }
 
-        o << "    float " << var << " = (";
-        switch (static_cast<makina::EvalOp>(n.op)) {
-            case makina::EvalOp::Sphere:
-                o << "mkSdSphere(" << p << ".x, " << p << ".y, " << p << ".z, "
-                  << detail::flt(n.params[0]) << ")";
-                break;
-            case makina::EvalOp::BoxCentered:
-                o << "mkSdBoxCentered(" << p << ".x, " << p << ".y, " << p << ".z, "
-                  << detail::flt(n.params[0]) << ", " << detail::flt(n.params[1]) << ", "
-                  << detail::flt(n.params[2]) << ")";
-                break;
-            case makina::EvalOp::CylinderCentered:
-                o << "mkSdCylinderCentered(" << p << ".x, " << p << ".y, " << p << ".z, "
-                  << detail::flt(n.params[0]) << ", " << detail::flt(n.params[1]) << ")";
-                break;
-            case makina::EvalOp::ConeCentered:
-                o << "mkSdConeCentered(" << p << ".x, " << p << ".y * "
-                  << detail::flt(n.params[2]) << ", " << p << ".z, "
-                  << detail::flt(n.params[0]) << ", " << detail::flt(n.params[1]) << ")";
-                break;
-            case makina::EvalOp::Torus:
-                o << "mkSdTorus(" << p << ".x, " << p << ".y, " << p << ".z, "
-                  << detail::flt(n.params[0]) << ", " << detail::flt(n.params[1]) << ")";
-                break;
-            default:
-                o << "mkSdPlane(" << p << ".y, 0.0)";
-                break;
+    if (stack.size() != 1) {
+        throw std::runtime_error("evaluation program does not reduce to a single value");
+    }
+
+    o << "    return " << stack.front() << ";\n}\n";
+    return o.str();
+}
+
+/// The same program again, carrying which material won.
+///
+/// A second function rather than widening the first, and the reason is measured: the march calls
+/// evalCsg once per step and the normal calls it four more times, none of which want a material.
+/// Threading an id through all of that would pay for it thousands of times per pixel to use it
+/// once. This one is called at the hit point and nowhere else, so the loop stays exactly as fast
+/// as it was (docs/SPIKE_PERF.md).
+///
+/// Which operand's material survives a boolean:
+///
+///   Union         the nearer surface. That is the one you are looking at.
+///   Intersection  the limiting surface, for the same reason.
+///   Difference    **always the left operand's**, even where the visible surface is the cut.
+///                 This is POV-Ray's cutaway_textures answer and Grasp3D's, and it has to match
+///                 or the export and the picture would paint the inside of a hole differently.
+inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
+    std::ostringstream o;
+    o << "// Generated for this scene. Do not edit.\n"
+      << "// x = distance, y = material index (255 = none)\n"
+      << "float2 evalCsgMaterial(float3 wp) {\n";
+
+    if (prog.nodes.empty()) {
+        o << "    return float2(1.0e30, 255.0);   // nothing renderable in this scene\n}\n";
+        return o.str();
+    }
+
+    std::vector<std::string> stack;
+    stack.reserve(prog.nodes.size());
+
+    for (std::size_t i = 0; i < prog.nodes.size(); ++i) {
+        const makina::EvalNode& n = prog.nodes[i];
+        const std::string var = "m" + std::to_string(i);
+
+        if (n.op >= static_cast<std::uint32_t>(makina::EvalOp::Union)) {
+            if (stack.size() < 2) {
+                throw std::runtime_error("evaluation program is malformed: a boolean has fewer "
+                                         "than two operands");
+            }
+            const std::string b = stack.back();  stack.pop_back();
+            const std::string a = stack.back();  stack.pop_back();
+
+            o << "    float2 " << var << " = ";
+            switch (static_cast<makina::EvalOp>(n.op)) {
+                case makina::EvalOp::Union:
+                    o << a << ".x < " << b << ".x ? " << a << " : " << b << ";\n";
+                    break;
+                case makina::EvalOp::Difference:
+                    o << "float2(max(" << a << ".x, -" << b << ".x), " << a << ".y);\n";
+                    break;
+                default:
+                    o << a << ".x > " << b << ".x ? " << a << " : " << b << ";\n";
+                    break;
+            }
+            stack.push_back(var);
+            continue;
         }
-        o << ") * " << detail::flt(n.params[3]) << ";\n";
+
+        // Same emitter as evalCsg, so the distance a material is attached to is the one the march
+        // actually walked. Copying the expressions here instead would let the two drift.
+        detail::emitPrimitiveLines(o, n, i, "m");
+        o << "    float2 " << var << " = float2(mt" << i << ", "
+          << detail::flt(static_cast<float>(n.materialId)) << ");\n";
         stack.push_back(var);
     }
 
@@ -125,7 +207,7 @@ inline std::string generateShader(const makina::EvalProgram& prog,
         // every scene and nothing needs compiling when the model changes.
         o << "#include \"scene_interpret.hlsl\"\n\n";
     } else {
-        o << generateEvalCsg(prog) << "\n";
+        o << generateEvalCsg(prog) << "\n" << generateEvalCsgMaterial(prog) << "\n";
     }
     o << "#include \"" << shadingInclude << "\"\n";
     return o.str();

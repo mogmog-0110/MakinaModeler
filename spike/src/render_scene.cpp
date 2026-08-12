@@ -11,6 +11,7 @@
 
 #include <makina/Bounds.hpp>
 #include <makina/Pov.hpp>
+#include <makina/RenderMaterial.hpp>
 #include <makina/SceneJson.hpp>
 
 #include <chrono>
@@ -33,7 +34,7 @@ struct alignas(256) FrameParams {
     float lightDir[3];  float stepScale;
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
-    std::uint32_t programCount;  std::uint32_t pad[3];
+    std::uint32_t programCount;  std::uint32_t materialCount;  std::uint32_t pad[2];
     // Only the interactive viewport highlights a selection; zero here means "nothing selected",
     // which is what every offscreen render wants.
     float selMin[3];    float selValid;
@@ -153,16 +154,21 @@ spike::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // descriptor table: it is one buffer bound once per draw, and a heap plus a descriptor would
     // be machinery around a single pointer. The generated-code path leaves t0 unbound, which is
     // legal because its shader never declares it.
-    D3D12_ROOT_PARAMETER param[2]{};
+    D3D12_ROOT_PARAMETER param[3]{};
     param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     param[0].Descriptor.ShaderRegister = 0;
     param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     param[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[1].Descriptor.ShaderRegister = 0;
     param[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    // t1 is the material table. Bound even by the generated path, which has the program inlined
+    // and leaves t0 unused -- one signature for both paths means the two are interchangeable.
+    param[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    param[2].Descriptor.ShaderRegister = 1;
+    param[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 2;
+    desc.NumParameters = 3;
     desc.pParameters = param;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -381,6 +387,7 @@ int main(int argc, char** argv) {
                 for (int pass = 0; pass < passes; ++pass) {
                     FrameParams params = frameScene(bounds.box, width, height, maxSteps);
                     params.nodeCount = static_cast<std::uint32_t>(prog.nodes.size());
+                    params.materialCount = scene.materials.count;
                     params.debugMode = debugSweep ? static_cast<std::uint32_t>(pass + 1) : 0u;
 
                     params.programCount = static_cast<std::uint32_t>(prog.nodes.size());
@@ -394,10 +401,24 @@ int main(int argc, char** argv) {
                         prog.nodes.data(), prog.nodes.size() * sizeof(makina::EvalNode),
                         L"evaluation program");
 
+                    // A scene with no materials still needs a buffer: an unbound root SRV that
+                    // the shader declares is undefined behaviour, not an empty table. One default
+                    // entry costs 48 bytes and the shader never reads it, because a surface with
+                    // no material takes mkDefaultMaterial instead.
+                    std::vector<makina::GpuMaterial> mats = makina::gpuMaterials(scene);
+                    if (mats.empty()) {
+                        mats.push_back(makina::defaultGpuMaterial());
+                    }
+                    spike::GpuBuffer materialBuffer = dev.createBufferWithData(
+                        mats.data(), mats.size() * sizeof(makina::GpuMaterial), L"materials");
+
                     dev.beginFrame();
                     dev.uploadBuffer(cb, sizeof(params),
                                      D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
                     dev.uploadBuffer(programBuffer, prog.nodes.size() * sizeof(makina::EvalNode),
+                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                    dev.uploadBuffer(materialBuffer, mats.size() * sizeof(makina::GpuMaterial),
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                     dev.executeAndWait();
@@ -418,6 +439,8 @@ int main(int argc, char** argv) {
                             0, cb.resource->GetGPUVirtualAddress());
                         cl->SetGraphicsRootShaderResourceView(
                             1, programBuffer.resource->GetGPUVirtualAddress());
+                        cl->SetGraphicsRootShaderResourceView(
+                            2, materialBuffer.resource->GetGPUVirtualAddress());
 
                         dev.writeTimestamp(0);
                         cl->DrawInstanced(3, 1, 0, 0);

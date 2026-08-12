@@ -25,6 +25,7 @@
 #include <makina/Flatten.hpp>
 #include <makina/Keymap.hpp>
 #include <makina/Pick.hpp>
+#include <makina/RenderMaterial.hpp>
 #include <makina/History.hpp>
 #include <makina/SceneJson.hpp>
 #include <makina/Transform.hpp>
@@ -50,7 +51,7 @@ struct alignas(256) FrameParams {
     float lightDir[3];  float stepScale;
     float farDist;      std::uint32_t enableAo;  std::uint32_t debugMode;  float groundY;
     float center[3];    float sceneRadius;
-    std::uint32_t programCount;  std::uint32_t pad0[3];
+    std::uint32_t programCount;  std::uint32_t materialCount;  std::uint32_t pad0[2];
     float selMin[3];    float selValid;
     float selMax[3];    float pad1;
 };
@@ -121,16 +122,20 @@ app::ComPtr<ID3D12PipelineState> createPipeline(ID3D12Device* device, ID3D12Root
 app::ComPtr<ID3D12RootSignature> createRootSignature(ID3D12Device* device) {
     // b0 for the frame, t0 for the evaluation program -- the same signature the offscreen renderer
     // uses, so the generated shaders are interchangeable between them.
-    D3D12_ROOT_PARAMETER param[2]{};
+    D3D12_ROOT_PARAMETER param[3]{};
     param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     param[0].Descriptor.ShaderRegister = 0;
     param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     param[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     param[1].Descriptor.ShaderRegister = 0;
     param[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    // t1, the material table. Declared by every shading wrapper, so it is bound on both paths.
+    param[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    param[2].Descriptor.ShaderRegister = 1;
+    param[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC desc{};
-    desc.NumParameters = 2;
+    desc.NumParameters = 3;
     desc.pParameters = param;
     desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -281,10 +286,25 @@ int main(int argc, char** argv) {
         app::ComPtr<ID3D12PipelineState> pso;
         std::unique_ptr<RingBuffer>      program;
         D3D12_GPU_VIRTUAL_ADDRESS        programAddress = 0;
+        std::unique_ptr<RingBuffer>      materials;
+        D3D12_GPU_VIRTUAL_ADDRESS        materialAddress = 0;
+        std::uint32_t                    materialCount = 0;
 
         auto rebuild = [&]() {
             prog = makina::flatten(history.current());
             bounds = makina::worldBounds(history.current());
+
+            // Rebuilt with the tree because an edit can add or change a material. A scene with
+            // none still gets one entry: the shader declares t1, and a root SRV that is declared
+            // but never bound is undefined behaviour rather than an empty table.
+            std::vector<makina::GpuMaterial> mats = makina::gpuMaterials(history.current());
+            materialCount = history.current().materials.count;
+            if (mats.empty()) {
+                mats.push_back(makina::defaultGpuMaterial());
+            }
+            const std::size_t materialBytes = mats.size() * sizeof(makina::GpuMaterial);
+            materials = std::make_unique<RingBuffer>(dev.device(), materialBytes);
+            materialAddress = materials->write(mats.data(), materialBytes);
 
             sceneRadius = 1.0;
             if (bounds.box.valid) {
@@ -727,6 +747,10 @@ int main(int argc, char** argv) {
             // The interpreter reads this; the generated shader has the count built into its code.
             p.programCount = static_cast<std::uint32_t>(
                 previewing ? previewProg.nodes.size() : prog.nodes.size());
+            // Not the previewed scene's: a transform never adds a material, and the buffer bound
+            // below is the committed one. Counting the preview's would let the shader index past
+            // the end of what is actually bound.
+            p.materialCount = materialCount;
 
             float light[3] = {-0.45f, -0.78f, -0.44f};
             const float len =
@@ -769,6 +793,7 @@ int main(int argc, char** argv) {
             } else {
                 cl->SetGraphicsRootShaderResourceView(1, programAddress);
             }
+            cl->SetGraphicsRootShaderResourceView(2, materialAddress);
             if (previewing || !prog.nodes.empty()) {
                 cl->DrawInstanced(3, 1, 0, 0);
             }

@@ -24,6 +24,8 @@
 #ifndef MAKINA_SCENE_ENGINE_HLSL
 #define MAKINA_SCENE_ENGINE_HLSL
 
+#include "scene_finish.hlsl"
+
 /// What the engine knows that the modeller does not.
 ///
 /// b1, so the camera basis in b0 keeps the layout every other Makina shader uses and one struct
@@ -154,8 +156,15 @@ PSOut PSMain(VSOut i) {
     o.depth = saturate(clip.z / clip.w + gDepthBias);
 
     const float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;
-    const float ndl = saturate(dot(nw, -gLightDir));
-    float3 col = gBaseColor * (gAmbient * ao + 0.9 * ndl * ao);
+
+    // The material the solid was authored with. gBaseColor still has a job: it tints the whole
+    // prop, so a game can reuse one baked shader for several coloured copies without re-baking.
+    // A solid that names no material takes gBaseColor outright, which is what CsgDrawDesc means.
+    MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+    mat.diffuseColor *= gBaseColor;
+    mat.ambient = gAmbient;
+
+    float3 col = mkAmbientTerm(mat, ao) + mkFinish(mat, nw, -gLightDir, -rdWorld, float3(1, 1, 1)) * ao;
     const float rim = pow(1.0 - saturate(dot(nw, -rdWorld)), 3.0);
     col += rim * 0.16;
 

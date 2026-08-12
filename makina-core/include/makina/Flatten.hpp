@@ -49,7 +49,13 @@ enum class EvalOp : std::uint32_t {
 /// 80 bytes, 16-byte aligned throughout so it maps onto an HLSL StructuredBuffer unchanged.
 struct EvalNode {
     std::uint32_t op;
-    std::uint32_t _pad[3];
+    /// Which material this surface wears, resolved at flatten time, or kNoMaterial.
+    ///
+    /// Resolved here rather than on the GPU because it is a walk up the authoring tree, and the
+    /// flat program has no parents. Taking one of the three padding words costs nothing: the
+    /// struct still has to be 80 bytes to map onto the HLSL declaration.
+    std::uint32_t materialId;
+    std::uint32_t _pad[2];
     /// Primitive dimensions. [3] carries the distance correction, never a dimension.
     float params[4];
     /// world -> local, three rows of four.
@@ -136,6 +142,10 @@ inline Fragment foldBalanced(std::vector<Fragment> parts, EvalOp op) {
             EvalNode n{};
             n.op = static_cast<std::uint32_t>(op);
             n.params[3] = 1.0f;
+            // A boolean wears no material of its own -- the shader picks the winning operand's.
+            // Left zero it would read as "material 0", which is a real index and would look
+            // deliberate to whoever read it next.
+            n.materialId = kNoMaterial;
             merged.push_back(n);
             next.push_back(std::move(merged));
         }
@@ -154,10 +164,33 @@ struct FlattenContext {
 /// centerY exists because two of Grasp3D's primitives are authored off-center along Y -- a
 /// Cylinder by its cap and base, a Cone standing on y=0 -- and the canonical forms are centered.
 /// The offset is folded into the inverse rather than passed as a parameter.
+/// The material a surface wears: its own, or the nearest ancestor's.
+///
+/// This is POV-Ray's rule, and it has to be, because the same tree is written out as a .pov file
+/// where an object with no texture takes the enclosing CSG object's. If the two disagreed, the
+/// picture and the export would differ for a reason that has nothing to do with geometry -- and
+/// the export is what the renderer is checked against.
+inline std::uint8_t resolveMaterial(const Scene& s, const CsgNode& start) {
+    const CsgNode* n = &start;
+    // Bounded rather than while(true): a malformed parent chain would otherwise hang the flatten
+    // with no output at all, which is the hardest kind of failure to place.
+    for (std::size_t guard = 0; guard < Scene::kMaxNodes; ++guard) {
+        if (n->materialId < s.materials.count) {
+            return n->materialId;
+        }
+        if (n->parent == kNoParent) {
+            break;
+        }
+        n = &s.nodes[n->parent];
+    }
+    return kNoMaterial;
+}
+
 inline bool emitPrimitive(FlattenContext& ctx, const CsgNode& n, const Mat4& world,
                           double scaleCorrection, Fragment& out) {
     EvalNode e{};
     e.params[3] = static_cast<float>(scaleCorrection);
+    e.materialId = resolveMaterial(*ctx.scene, n);
 
     double centerX = 0.0, centerY = 0.0, centerZ = 0.0;
     const float* q = n.params;
@@ -304,6 +337,7 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         EvalNode d{};
         d.op = static_cast<std::uint32_t>(EvalOp::Difference);
         d.params[3] = 1.0f;
+        d.materialId = kNoMaterial;
         body.push_back(d);
         return body;
     }

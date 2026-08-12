@@ -17,7 +17,7 @@ cbuffer Params : register(b0) {
     float3 gLightDir;   float gStepScale;
     float  gFarDist;    uint  gEnableAO;  uint gDebugMode;  float gGroundY;
     float3 gCenter;     float gSceneRadius;
-    uint   gProgramCount; uint _cbPad[3];
+    uint   gProgramCount; uint gMaterialCount; uint _cbPad[2];
     // Selection highlight, as a world box. The viewport sets it; the offscreen renderer leaves
     // gSelValid at zero, so both use the same layout and the same generated shaders.
     float3 gSelMin;     float gSelValid;

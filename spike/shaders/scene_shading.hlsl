@@ -5,6 +5,8 @@
 #ifndef MAKINA_SCENE_SHADING_HLSL
 #define MAKINA_SCENE_SHADING_HLSL
 
+#include "scene_finish.hlsl"
+
 float3 calcNormal(float3 p, float h) {
     const float2 k = float2(1.0, -1.0);
     return normalize(k.xyy * evalCsg(p + k.xyy * h) +
@@ -69,10 +71,16 @@ float4 PSMain(VSOut i) : SV_Target {
     float3 n = calcNormal(p, normalEps);
 
     float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;
-    float ndl = saturate(dot(n, -gLightDir));
-    float3 base = float3(0.62, 0.64, 0.68);
 
-    float3 col = base * (0.16 * ao + 0.9 * ndl * ao);
+    // One more evaluation, at the hit point only, to learn which surface this is. The march and
+    // the normal never pay for it (scene_codegen.hpp explains why it is a separate function).
+    MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+
+    // The occlusion multiplies the light, not the material: POV has no ambient occlusion at all,
+    // so folding it into the ambient term would be inventing a difference from the oracle in the
+    // one place the two are supposed to be comparable.
+    float3 col = mkAmbientTerm(mat, ao) + mkFinish(mat, n, -gLightDir, -rd, float3(1, 1, 1)) * ao;
+
     float rim = pow(1.0 - saturate(dot(n, -rd)), 3.0);
     col += rim * 0.16;
 
