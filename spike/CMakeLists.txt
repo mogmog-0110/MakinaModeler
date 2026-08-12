@@ -90,6 +90,23 @@ if(MSVC)
         /external:I "${MAKINA_CORE_DIR}/external" /external:W0)
 endif()
 
+# Asset import: generates the scene's shader and compiles it to DXIL once, so a runtime does not
+# need a shader compiler (SPIKE_PERF.md 9).
+add_executable(makina_bake src/makina_bake.cpp src/scene_codegen.hpp src/dxc_invoke.hpp)
+target_include_directories(makina_bake PRIVATE
+    "${MAKINA_CORE_DIR}/include"
+    "${MAKINA_CORE_DIR}/external")
+add_dependencies(makina_bake spike_shaders)
+target_compile_definitions(makina_bake PRIVATE
+    DXC_PATH="${DXC_EXECUTABLE}"
+    SPIKE_SHADER_DIR="${SHADER_DIR}"
+    MAKINA_CORE_INCLUDE="${MAKINA_CORE_DIR}/include/makina")
+if(MSVC)
+    target_compile_options(makina_bake PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(makina_bake PRIVATE
+        /external:I "${MAKINA_CORE_DIR}/external" /external:W0)
+endif()
+
 # No device and no shader: it only reads two BMPs, so it builds and runs anywhere.
 add_executable(silhouette_compare src/silhouette_compare.cpp)
 if(MSVC)

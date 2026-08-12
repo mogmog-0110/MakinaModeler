@@ -11,6 +11,11 @@ build/
 *.cso
 spike/build/
 
+# Baked assets. Reproduced by makina_bake at import time; the point of a bake is that it is
+# derived, and a committed one is a derived thing that can disagree with its source.
+*.csgbake.json
+*.gen.hlsl
+
 # Java class files
 *.class
 

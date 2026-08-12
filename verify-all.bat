@@ -49,6 +49,12 @@ if errorlevel 1 (
 ) else (
     call "%HERE%spike\silhouette-check.bat"
     if errorlevel 1 set FAILED=1
+
+    echo.
+    echo    the baked DXIL against what the modeller compiles
+    echo.
+    call "%HERE%spike\bake-check.bat"
+    if errorlevel 1 set FAILED=1
 )
 
 echo.
