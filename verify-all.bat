@@ -63,6 +63,12 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    the weathered look, still reading what the scene says
+    echo.
+    call "%HERE%spike\weathered-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    what a frame costs, against the ceiling the plan sets
     echo.
     call "%HERE%spike\perf-check.bat"

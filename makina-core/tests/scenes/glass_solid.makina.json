@@ -1,0 +1,100 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "nextId": 7,
+  "materials": [
+    {
+      "id": 0,
+      "diffuse": [
+        120,
+        200,
+        160
+      ],
+      "alpha": 1.0,
+      "ambient": 0.05,
+      "specular": 0.0,
+      "shininess": 1.0,
+      "emission": 0.0,
+      "texture": null
+    },
+    {
+      "id": 1,
+      "diffuse": [
+        230,
+        110,
+        60
+      ],
+      "alpha": 1.0,
+      "ambient": 0.1,
+      "specular": 0.0,
+      "shininess": 1.0,
+      "emission": 0.0,
+      "texture": null
+    }
+  ],
+  "lights": [
+    {
+      "directional": false,
+      "shadowless": true,
+      "position": [
+        5.0,
+        6.0,
+        4.0
+      ],
+      "color": [
+        255,
+        250,
+        240
+      ],
+      "softness": 0.0,
+      "fadeDistance": 0.0,
+      "fadePower": 0.0
+    }
+  ],
+  "root": {
+    "op": "SceneRoot",
+    "id": 1,
+    "name": "Scene",
+    "children": [
+      {
+        "op": "Translate",
+        "id": 2,
+        "name": "behind",
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.6,
+        "children": [
+          {
+            "op": "Box",
+            "id": 3,
+            "name": "block",
+            "material": 1,
+            "x1": -0.8,
+            "y1": -0.8,
+            "z1": -0.3,
+            "x2": 0.8,
+            "y2": 0.8,
+            "z2": 0.3
+          }
+        ]
+      },
+      {
+        "op": "Translate",
+        "id": 4,
+        "name": "front",
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.9,
+        "children": [
+          {
+            "op": "Sphere",
+            "id": 5,
+            "name": "glass",
+            "material": 0,
+            "radius": 1.0
+          }
+        ]
+      }
+    ]
+  }
+}

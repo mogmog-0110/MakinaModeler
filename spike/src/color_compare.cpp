@@ -189,6 +189,12 @@ int main(int argc, char** argv) {
     double      strongShareLimit = 0.02;
     std::string title = "makina ray march vs POV-Ray, pixel for pixel";
     std::string agreed = "the two renderers put the same colors on the same surfaces";
+    // Inverted, for the checks that exist to prove a difference is there.
+    //
+    // "The two agree" is worth nothing when both are blank, and a feature that stopped reaching the
+    // picture would pass every comparison in this project by agreeing with a copy of itself. So a
+    // check that a material actually changes the image asks for the opposite verdict.
+    bool mustDiffer = false;
     constexpr int kStrong = 40;
 
     int first = 1;
@@ -202,6 +208,10 @@ int main(int argc, char** argv) {
             title = argv[first + 1];
         } else if (flag == "--agreed") {
             agreed = argv[first + 1];
+        } else if (flag == "--differ") {
+            mustDiffer = true;
+            // No value of its own; the loop below steps by two.
+            --first;
         } else {
             std::fprintf(stderr, "color_compare: unknown option '%s'\n", flag.c_str());
             return 2;
@@ -253,6 +263,13 @@ int main(int argc, char** argv) {
         if (r.counted == 0) {
             std::printf("    FAIL  neither renderer drew anything; there is nothing to compare\n");
             ++failures;
+        } else if (mustDiffer) {
+            if (r.mean <= meanLimit && share <= strongShareLimit) {
+                std::printf("    FAIL  the two are the same picture, and should not be\n");
+                ++failures;
+            } else {
+                std::printf("    differs, as it must -> %s\n", diffPath.c_str());
+            }
         } else if (r.mean > meanLimit || share > strongShareLimit) {
             std::printf("    FAIL  past mean %.1f or %.0f%% strongly differing\n", meanLimit,
                         strongShareLimit * 100.0);
