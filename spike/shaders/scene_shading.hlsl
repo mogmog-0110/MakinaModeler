@@ -189,52 +189,105 @@ float4 PSMain(VSOut i) : SV_Target {
     float normalEps = gFarDist * 2.0e-4;
     float aoReach = gFarDist * 0.02;
 
-    float t = 0.0;
-    bool hit = false;
-    for (uint s = 0; s < gMaxSteps; ++s) {
-        float d = evalCsg(rayOrigin + rd * t);
-        if (d < hitEps) { hit = true; break; }
-        // Difference is max(a,-b), only a lower bound on the true distance, so a full step can
-        // tunnel through a seam. Backing off is the guard (PLAN.md R-03).
-        t += d * gStepScale;
-        if (t > gFarDist) break;
+    // Surfaces along the ray, front to back, until the light left to spend runs out.
+    //
+    // A ray marcher stops at the first surface because that is all an opaque model needs. POV
+    // traces on through anything with a filter, so stopping here would not be a slightly different
+    // picture -- it would be the transparent object drawn as if it were solid.
+    //
+    // Bounded rather than "until it leaves the scene": each layer is another march of the whole
+    // field, and POV's own max_trace_level is 5. Four is the same order and is stated rather than
+    // discovered as a slowdown.
+    const uint kMaxLayers = 4u;
+
+    float3 col = float3(0, 0, 0);
+    // What fraction of each channel still reaches the eye. Per channel, because POV's filter is
+    // tinted by the pigment -- red glass passes red.
+    float3 through = float3(1, 1, 1);
+    float3 origin = rayOrigin;
+    float3 p = rayOrigin;
+    float3 n = float3(0, 1, 0);
+    bool   anyHit = false;
+
+    for (uint layer = 0u; layer < kMaxLayers; ++layer) {
+        float t = 0.0;
+        bool hit = false;
+        for (uint s = 0; s < gMaxSteps; ++s) {
+            // The magnitude, not the value. After the first surface the ray carries on from inside
+            // the solid, where the field is negative and a signed test would read every step as a
+            // hit. Marching by |d| walks the interior and stops on the way out.
+            float d = evalCsg(origin + rd * t);
+            if (abs(d) < hitEps) { hit = true; break; }
+            // Difference is max(a,-b), only a lower bound on the true distance, so a full step can
+            // tunnel through a seam. Backing off is the guard (PLAN.md R-03).
+            t += abs(d) * gStepScale;
+            if (t > gFarDist) break;
+        }
+
+        if (!hit) {
+            if (gPovMatch == 0u) {
+                float sky = 0.28 + 0.32 * (1.0 - i.uv.y);
+                col += through * float3(sky * 0.55, sky * 0.62, sky * 0.78);
+            }
+            break;   // POV's background is black, so nothing is added in match mode
+        }
+
+        anyHit = true;
+        p = origin + rd * t;
+        n = calcNormal(p, normalEps);
+
+        float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;
+
+        // One more evaluation, at the hit point only, to learn which surface this is. The march
+        // and the normal never pay for it (scene_codegen.hpp explains why it is a separate
+        // function).
+        MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+        // The pattern is read at the hit point, in the space the march runs in -- POV transforms a
+        // pigment with its object, so a moved solid takes its texture with it rather than sliding
+        // through a pattern fixed to the world.
+        mat.diffuseColor = mkSurfaceColor(mat, mat.textureIndex, p);
+
+        float3 here = mkLighting(mat, p, n, -rd, ao, hitEps);
+
+        if (mat.reflection > 0.0) {
+            // Added on top rather than traded against the diffuse. That is POV's default: it only
+            // takes the difference out of the diffuse when the finish asks for conserve_energy,
+            // and matching the default is what keeps the two pictures comparable.
+            here += mkReflected(p, n, rd, hitEps, normalEps) * mat.reflection;
+        }
+
+        if (gPovMatch == 0u) {
+            // Edge lift, so a silhouette stays legible against the sky. Pure presentation -- POV
+            // has no such term, so it goes when the two are being compared.
+            float rim = pow(1.0 - saturate(dot(n, -rd)), 3.0);
+            here += rim * 0.16;
+        }
+
+        // POV's filter, which is not alpha: what passes through is tinted by the pigment on the
+        // way. `alpha` is stored as opacity and the exported file inverts it, so the filter is
+        // what is left over.
+        const float filt = saturate(1.0 - mat.alpha);
+        col += through * here * (1.0 - filt);
+        if (filt <= 0.0) {
+            break;
+        }
+        through *= filt * mat.diffuseColor;
+        if (max(through.r, max(through.g, through.b)) < 1.0 / 512.0) {
+            // Below half a level of an 8-bit channel. Carrying on would cost another march of the
+            // field to change nothing that can be written to the file.
+            break;
+        }
+
+        // Past the surface, or the next march finds the one just left.
+        origin = p + rd * (hitEps * 4.0);
     }
 
-    if (!hit) {
+    if (!anyHit) {
         if (gPovMatch != 0u) {
             return float4(0, 0, 0, 1);   // POV's default background
         }
         float sky = 0.28 + 0.32 * (1.0 - i.uv.y);
         return float4(sky * 0.55, sky * 0.62, sky * 0.78, 1.0);
-    }
-
-    float3 p = rayOrigin + rd * t;
-    float3 n = calcNormal(p, normalEps);
-
-    float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;
-
-    // One more evaluation, at the hit point only, to learn which surface this is. The march and
-    // the normal never pay for it (scene_codegen.hpp explains why it is a separate function).
-    MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
-    // The pattern is read at the hit point, in the space the march runs in -- POV transforms a
-    // pigment with its object, so a moved solid takes its texture with it rather than sliding
-    // through a pattern fixed to the world.
-    mat.diffuseColor = mkSurfaceColor(mat, mat.textureIndex, p);
-
-    float3 col = mkLighting(mat, p, n, -rd, ao, hitEps);
-
-    if (mat.reflection > 0.0) {
-        // Added on top rather than traded against the diffuse. That is POV's default: it only
-        // takes the difference out of the diffuse when the finish asks for conserve_energy, and
-        // matching the default is what keeps the two pictures comparable.
-        col += mkReflected(p, n, rd, hitEps, normalEps) * mat.reflection;
-    }
-
-    if (gPovMatch == 0u) {
-        // Edge lift, so a silhouette stays legible against the sky. Pure presentation -- POV has
-        // no such term, so it goes when the two are being compared.
-        float rim = pow(1.0 - saturate(dot(n, -rd)), 3.0);
-        col += rim * 0.16;
     }
 
     // Selection: tint whatever is inside the selected subtree's world box.

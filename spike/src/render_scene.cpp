@@ -139,7 +139,10 @@ bool hasUnboundedPrimitive(const makina::Scene& s) {
     return false;
 }
 
-/// Whether any material lets light through. POV traces on; this renderer stops at the surface.
+/// Whether any material lets light through.
+///
+/// Both renderers trace through one; they disagree on how bright the result is, so a scene with
+/// one is left out of the pixel comparison and says so.
 bool hasTransparentMaterial(const makina::Scene& s) {
     for (std::uint32_t i = 0; i < s.materials.count; ++i) {
         if (s.materials[i].alpha < 0.999f) {
@@ -441,12 +444,18 @@ int main(int argc, char** argv) {
                 }
 
                 if (povMatch && hasTransparentMaterial(scene)) {
-                    // Not a tolerance problem and not a bug: this renderer has no transparency at
-                    // all. The march stops at the first surface, so an alpha of 0.1 draws as if it
-                    // were 1.0 while POV traces on through and shows what is behind. Comparing the
-                    // two would measure a feature that is missing, which the number cannot say.
-                    std::printf("    no .pov: the scene has a see-through material and this "
-                                "renderer stops at the first surface\n");
+                    // The renderer does trace through a filtered surface now, and the picture is
+                    // right in kind: the glass is green, the block behind shows through it, and
+                    // the wedge where they overlap is in the same place as POV's.
+                    //
+                    // What does not match is brightness. Ours comes out at a uniform 0.70 of POV
+                    // across all three channels at every point measured -- flat, so the hue is
+                    // right and something scales the whole result. POV's own compositing for
+                    // filter is what would settle it, and guessing at a factor until the number
+                    // passed would be fitting a constant to one scene rather than matching an
+                    // implementation.
+                    std::printf("    no .pov: this renderer traces through a filtered surface "
+                                "but does not yet match POV's brightness (a flat 0.70)\n");
                 } else if (writePov && hasUnboundedPrimitive(scene)) {
                     // POV-Ray has no far plane; the march does. An infinite Plane therefore fills
                     // POV's frame and stops at a circle in ours, and the comparison measures the
