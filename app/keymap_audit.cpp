@@ -58,12 +58,15 @@ std::string withoutComments(const std::string& src) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: keymap_audit <viewport source> [<more sources>]\n");
+    if (argc < 3) {
+        std::fprintf(stderr,
+                     "usage: keymap_audit <viewport source> <command layer source>\n");
         return 2;
     }
 
-    std::string code;
+    // The viewport comes first and the command layer last, because the two are asked different
+    // questions: whether an action reaches a branch, and whether a command reaches a dispatch.
+    std::vector<std::string> sources;
     for (int i = 1; i < argc; ++i) {
         std::ifstream in(argv[i], std::ios::binary);
         if (!in) {
@@ -72,8 +75,10 @@ int main(int argc, char** argv) {
         }
         std::ostringstream buf;
         buf << in.rdbuf();
-        code += withoutComments(buf.str());
+        sources.push_back(withoutComments(buf.str()));
     }
+    const std::string code = sources.front();
+    const std::string commands = sources.back();
 
     std::printf("every action the keymap knows, carried out by the viewport\n\n");
 
@@ -124,11 +129,34 @@ int main(int argc, char** argv) {
         }
     }
 
+    // And the other driver. An edit the viewport offers and a script cannot ask for is a
+    // modeller whose capabilities depend on which way it is driven, which Phase 3 rules out.
+    for (const std::string& action : makina::knownActions()) {
+        if (action.rfind("edit.", 0) != 0) {
+            continue;
+        }
+        bool paired = false;
+        for (const auto& pair : makina::editCommands()) {
+            if (pair.first == action) {
+                paired = true;
+                if (commands.find("\"" + pair.second + "\"") == std::string::npos) {
+                    std::printf("    FAIL  '%s' names the command '%s', which the command layer "
+                                "does not dispatch\n", action.c_str(), pair.second.c_str());
+                    ++missing;
+                }
+            }
+        }
+        if (!paired) {
+            std::printf("    FAIL  '%s' is an edit and no command performs it\n", action.c_str());
+            ++missing;
+        }
+    }
+
     if (missing != 0) {
         std::printf("\n%d action(s) promised and not reachable\n", missing);
         return 1;
     }
-    std::printf("    %zu actions, every one of them reaches the viewport\n",
-                makina::knownActions().size());
+    std::printf("    %zu actions reach the viewport, and every edit among them reaches the "
+                "command layer too\n", makina::knownActions().size());
     return 0;
 }

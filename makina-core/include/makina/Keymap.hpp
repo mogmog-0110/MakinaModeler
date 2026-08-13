@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace makina {
@@ -86,6 +87,35 @@ inline const std::vector<std::string>& knownActions() {
         "snap.hold",
     };
     return kActions;
+}
+
+/// Which command does the same thing as an `edit.` action.
+///
+/// Phase 3's condition is that the same edits are reachable from the command line as from the
+/// viewport, and that condition was quietly false twice: muting had a key and no command, and
+/// translate, rotate and scale had never had one at all -- `move` in the command layer is a
+/// reparent, so a script could put a node elsewhere in the tree and not shift it a millimetre.
+/// Both were found by hand, one after the other, which is not a way to keep a promise.
+///
+/// So the pairing is declared rather than remembered. keymap_audit walks this table and fails when
+/// an `edit.` action has no entry, or when the command it names is not one the command layer
+/// dispatches. Adding an edit to the viewport now means saying which command performs it, and the
+/// answer "none yet" is not one the build accepts.
+///
+/// Only `edit.` actions. A camera has nothing to reach from a script -- there is no camera in a
+/// scene file -- and a selection is state the viewport holds while a command names its node by id.
+inline const std::vector<std::pair<std::string, std::string>>& editCommands() {
+    static const std::vector<std::pair<std::string, std::string>> kPairs = {
+        {"edit.move", "translate"},
+        {"edit.rotate", "rotate"},
+        {"edit.scale", "scale"},
+        {"edit.duplicate", "duplicate"},
+        {"edit.delete", "remove"},
+        {"edit.toggleMute", "mute"},
+        {"edit.undo", "undo"},
+        {"edit.redo", "redo"},
+    };
+    return kPairs;
 }
 
 namespace detail {

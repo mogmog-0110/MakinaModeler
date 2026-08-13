@@ -26,7 +26,7 @@ if not exist "%EXE%" (
 REM The keymap before the keys. Every action the build says it knows has to reach the
 REM viewport, or a scripted key below could "pass" by doing nothing at all -- which is how
 REM Shift and a click came to do nothing for as long as they did.
-"%HERE%build\bin\keymap_audit.exe" "%HERE%viewport\main.cpp"
+"%HERE%build\bin\keymap_audit.exe" "%HERE%viewport\main.cpp" "%HERE%..\makina-core\include\makina\Command.hpp"
 if errorlevel 1 set FAILED=1
 echo.
 if not exist "%OUT%" mkdir "%OUT%"
