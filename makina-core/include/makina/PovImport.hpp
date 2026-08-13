@@ -373,10 +373,14 @@ private:
             }
             refuseUnsupportedShape();
             const std::string& w = t.text;
-            if (w == "global_settings" || w == "camera" || w == "light_source" ||
-                w == "background" || w == "sky_sphere" || w == "fog") {
-                // The frame, not the model. This reader produces a scene; the renderer brings its
-                // own camera and the scene format carries its own lights.
+            if (w == "light_source") {
+                readLight();
+                return;
+            }
+            if (w == "global_settings" || w == "camera" || w == "background" ||
+                w == "sky_sphere" || w == "fog") {
+                // The frame, not the model. This reader produces a scene, and the scene format
+                // has nowhere to put a camera or a sky.
                 take();
                 note(w);
                 skipBlock();
@@ -529,6 +533,73 @@ private:
         }
         take();
         return ior;
+    }
+
+    /// One `light_source { <at> color ... }`.
+    ///
+    /// Always a point light. POV has no directional light at all -- the exporter fakes one by
+    /// putting a point light ten thousand units away along the direction -- so there is nothing in
+    /// the file to read it back from, and a reader that guessed "far away means directional" would
+    /// turn a genuinely distant lamp into one that never falls off.
+    ///
+    /// `softness` stays zero for the same reason: POV casts a hard shadow from a point light, so a
+    /// file cannot be asking for anything else.
+    void readLight() {
+        take();
+        expectPunct('{');
+        Light l{};
+        l.color[0] = l.color[1] = l.color[2] = 1.0f;
+
+        double v[3];
+        vector3(v);
+        for (int i = 0; i < 3; ++i) {
+            l.position[i] = static_cast<float>(v[i]);
+        }
+
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("a light_source block was not closed");
+            }
+            if (isWord("color") || isWord("rgb") || isWord("srgb")) {
+                float c[3] = {1, 1, 1};
+                readMapColor(c);
+                for (int i = 0; i < 3; ++i) {
+                    l.color[i] = c[i];
+                }
+                continue;
+            }
+            if (isWord("shadowless")) {
+                take();
+                l.shadowless = 1u;
+                continue;
+            }
+            if (isWord("fade_distance")) {
+                take();
+                l.fadeDistance = static_cast<float>(number());
+                continue;
+            }
+            if (isWord("fade_power")) {
+                take();
+                l.fadePower = static_cast<float>(number());
+                continue;
+            }
+            if (peek().kind == PovTokenKind::Word) {
+                // area_light, spotlight, looks_like, projected_through: each changes what the lamp
+                // is, and this model holds one kind of lamp. Named rather than dropped, because a
+                // spotlight read as a point light lights the whole room.
+                note("light_source " + take().text);
+                skipValue();
+                continue;
+            }
+            skipValue();
+        }
+        take();
+
+        if (m_lights.size() >= Scene::kMaxLights) {
+            refuse("the scene needs more than this model's " + std::to_string(Scene::kMaxLights) +
+                   " lights");
+        }
+        m_lights.push_back(l);
     }
 
     /// One `color` entry of a pigment or a color_map, as three floats in 0..1.
@@ -1332,6 +1403,9 @@ private:
         for (std::size_t i = 0; i < m_pigments.size(); ++i) {
             s.pigments[s.pigments.count++] = m_pigments[i];
         }
+        for (std::size_t i = 0; i < m_lights.size(); ++i) {
+            s.lights[s.lights.count++] = m_lights[i];
+        }
         emit(s, root, 0);
         return s;
     }
@@ -1383,6 +1457,7 @@ private:
     std::map<std::string, std::vector<double>> m_vectors;
     std::map<std::string, Material> m_textures;
     std::vector<Pigment> m_pigments;
+    std::vector<Light> m_lights;
     std::map<std::string, PovNode> m_objects;
     std::map<std::string, std::vector<PovMove>> m_transforms;
     /// The components past the third of the last `<...>` literal read.

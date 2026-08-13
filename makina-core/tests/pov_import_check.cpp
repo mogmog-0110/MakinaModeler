@@ -101,6 +101,62 @@ double scaleOf(const makina::Scene& s) {
     return r > 1e-9 ? r : 1.0;
 }
 
+/// The lamps, before and after.
+///
+/// Two of this model's light fields cannot survive POV and are named rather than tolerated. A
+/// directional light is exported as a point light ten thousand units away, because POV has no
+/// other way to say it, and nothing in the file distinguishes that from a genuinely distant lamp.
+/// `softness` has no POV form at all -- a point light there casts a hard shadow.
+void compareLights(const makina::Scene& before, const makina::Scene& after) {
+    bool exportable = true;
+    for (std::uint32_t i = 0; i < before.lights.count; ++i) {
+        if (before.lights[i].directional != 0u || before.lights[i].softness != 0.0f) {
+            exportable = false;
+        }
+    }
+    if (!exportable) {
+        std::printf("    lights not compared: a directional or soft light has no POV form\n");
+        return;
+    }
+
+    check(before.lights.count == after.lights.count,
+          "the scene came back with " + std::to_string(after.lights.count) + " lights instead of " +
+              std::to_string(before.lights.count));
+    if (before.lights.count != after.lights.count) {
+        return;
+    }
+
+    float worst = 0.0f;
+    std::size_t worstField = 0;
+    for (std::uint32_t i = 0; i < before.lights.count; ++i) {
+        const makina::Light& x = before.lights[i];
+        const makina::Light& y = after.lights[i];
+        // The flags are named rather than swept up with the floats. Reading a uint32 through a
+        // float pointer turns the value 1 into a denormal around 1e-45, so a lamp that lost its
+        // `shadowless` differed by less than any tolerance worth having -- which is what the
+        // negative control found when it was written that way and did not fail.
+        check(x.directional == y.directional, "a light changed between point and directional");
+        check(x.shadowless == y.shadowless, "a light gained or lost its shadowless");
+
+        const float mine[7] = {x.position[0], x.position[1], x.position[2],
+                               x.color[0],    x.color[1],    x.color[2], x.fadeDistance};
+        const float theirs[7] = {y.position[0], y.position[1], y.position[2],
+                                 y.color[0],    y.color[1],    y.color[2], y.fadeDistance};
+        for (std::size_t f = 0; f < 7; ++f) {
+            const float d = std::fabs(mine[f] - theirs[f]);
+            if (d > worst) { worst = d; worstField = f; }
+        }
+        const float dp = std::fabs(x.fadePower - y.fadePower);
+        if (dp > worst) { worst = dp; worstField = 7; }
+    }
+    check(worst <= 1.0e-5f, "light field " + std::to_string(worstField) + " differs by " +
+                                std::to_string(worst) + " after the round trip");
+    if (before.lights.count > 0) {
+        std::printf("    %u lights, worst difference %.2e\n", before.lights.count,
+                    static_cast<double>(worst));
+    }
+}
+
 /// A lattice through the scene's bounds, the same one the geometry half samples.
 std::vector<std::array<double, 3>> latticePoints(const makina::Scene& s) {
     const makina::Aabb box = makina::worldBounds(s).box;
@@ -206,6 +262,10 @@ void roundTrip(const std::string& path) {
 
     makina::PovOptions opt;
     opt.silhouette = false;
+    // The lamps go in the preamble, which is where the renderer puts them too. Leaving it
+    // empty would export a scene with no lights and read back a scene with no lights, and the
+    // comparison would agree about nothing.
+    opt.preamble = makina::detail::povLights(original);
     const std::string pov = makina::writePov(original, opt);
 
     makina::PovImportResult back;
@@ -248,6 +308,7 @@ void roundTrip(const std::string& path) {
     std::printf("    %u nodes -> %u after the round trip, worst field difference %.2e\n",
                 original.nodes.count, back.scene.nodes.count, worst);
     compareAppearance(original, back.scene);
+    compareLights(original, back.scene);
 }
 
 /// Reads a fragment and expects it to be refused, with the reason mentioning `because`.
