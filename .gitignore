@@ -34,3 +34,4 @@ tools/*/out/
 
 # POV-Ray output
 *.pov
+va.txt
