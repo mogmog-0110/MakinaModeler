@@ -174,13 +174,17 @@ using ViewEntries = std::vector<std::pair<std::string, std::string>>;
             }
         }
 
+        // A node with no name of its own shows its op, and then the second column has nothing
+        // left to add -- a row reading "Translate  Translate" is the outliner explaining itself
+        // twice. The field stays in the schema and simply carries nothing.
         const std::string name = s.nameOf(n);
+        const std::string shown = name.empty() ? opName(op) : name;
         if (i != 0) {
             out += ",";
         }
         out += "{\"id\":" + std::to_string(n.id);
-        out += ",\"name\":" + detail::jsonQuote(name.empty() ? opName(op) : name);
-        out += ",\"op\":" + detail::jsonQuote(opName(op));
+        out += ",\"name\":" + detail::jsonQuote(shown);
+        out += ",\"op\":" + detail::jsonQuote(shown == opName(op) ? "" : opName(op));
         out += ",\"icon\":" + detail::jsonQuote(detail::iconFor(op));
         out += ",\"indent\":" + std::to_string(depth * 12);
         out += ",\"selected\":" + std::string(picked ? "true" : "false");

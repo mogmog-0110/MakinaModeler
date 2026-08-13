@@ -162,6 +162,17 @@ int main() {
         check(tree[2]["icon"] == "lucide/circle.svg", "Grasp3D had no sphere icon of its own");
         check(tree[3]["icon"] == "grasp3d/box16.gif", "the box icon is Grasp3D's");
         check(tree[1]["op"] == "Difference", "the row names its op");
+
+        // A node whose only name is its op says it once. The fixture's node 4 is called "cut",
+        // so its op still earns the second column; a node called "Box" would not.
+        check(tree[3]["op"] == "Box", "a named node still shows what it is");
+        {
+            makina::Scene bare = s;
+            std::snprintf(bare.names[3].text, sizeof(bare.names[3].text), "%s", "Box");
+            const nlohmann::json row = nlohmann::json::parse(makina::treeJson(bare, {}))[3];
+            check(row["name"] == "Box", "the name is what the user gave");
+            check(row["op"] == "", "and the op column does not repeat it");
+        }
     }
 
     // --- the property rows -------------------------------------------------------------------

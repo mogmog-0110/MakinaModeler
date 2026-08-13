@@ -32,7 +32,7 @@ echo.
 if not exist "%OUT%" mkdir "%OUT%"
 REM Last run's saves are deleted first. A run that dies before writing would otherwise be compared
 REM against its own previous output, and every check would pass on a program that did nothing.
-del /q "%OUT%\*.json" "%OUT%\*.ppm" >nul 2>&1
+del /q "%OUT%\*.json" "%OUT%\*.ppm" "%OUT%\*.log" >nul 2>&1
 
 REM Node 4 is the Translate carrying the neck and shoulder, y = 3.0987 in the source scene.
 REM Node 15 is a Cylinder with no transform of its own, so moving it has to grow one.
@@ -133,6 +133,28 @@ call :actshot camback  "view.front view.genuine"
 call :diffPic camstart camfront "snapping to the front view must move the camera"
 call :samePic camstart camback  "Genuine must come back to the camera the axis view took over"
 
+REM The state the shell reads, out of the running application.
+REM
+REM viewstate_check.cpp already proves the builders are right, which is a different claim: it says
+REM the header can produce this, not that the viewport does. Between the two sits the wiring --
+REM whether the tree handed over is the edited one, whether the selection is the live one -- and
+REM that is exactly the seam a header test cannot see.
+REM
+REM Nodes 13 and 15 are selected on the way in, so a dump that does not mark them is a dump built
+REM from something other than what the viewport is showing.
+echo    view state
+"%EXE%" "%SCENE%" --select "13,15" --frames 6 --dump-state "%OUT%\state.json" ^
+    >"%OUT%\state.log" 2>&1
+if errorlevel 1 (
+    echo       FAILED: the run did not finish - see %OUT%\state.log
+    set FAILED=1
+)
+call :inState "view.status.nodes.: .87 nodes" "the node count has to reach the shell"
+call :inState "id.:15,.name.:.Cylinder" "the outliner rows have to be the real tree"
+call :inState "id.:15,[^{]*selected.:true" "the live selection has to reach the outliner"
+call :inState "id.:14,[^{]*selected.:false" "and an unselected node must not be marked"
+call :inState "Cylinder +1" "the status bar has to say what is selected"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -183,6 +205,19 @@ if not exist "%OUT%\%~1.ppm" (
 fc /b "%OUT%\%~1.ppm" "%OUT%\%~2.ppm" >nul 2>&1
 if not errorlevel 1 (
     echo       FAILED [%~1]: %~3
+    set FAILED=1
+)
+exit /b 0
+
+:inState
+if not exist "%OUT%\state.json" (
+    echo       FAILED: no view state was written
+    set FAILED=1
+    exit /b 0
+)
+findstr /R /C:"%~1" "%OUT%\state.json" >nul 2>&1
+if errorlevel 1 (
+    echo       FAILED: %~2
     set FAILED=1
 )
 exit /b 0

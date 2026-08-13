@@ -31,6 +31,9 @@
 #include <makina/History.hpp>
 #include <makina/SceneJson.hpp>
 #include <makina/Transform.hpp>
+#include <makina/ViewState.hpp>
+
+#include <chrono>
 
 #include <cstdio>
 #include <cstdlib>
@@ -289,6 +292,7 @@ int main(int argc, char** argv) {
     // Writes the tree out on exit, so an edit can be read as numbers rather than judged from a
     // picture. "The image changed" only says something changed.
     std::string savePath;
+    std::string statePath;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keymap" && i + 1 < argc) {
@@ -335,6 +339,11 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--save" && i + 1 < argc) {
             savePath = argv[++i];
+        } else if (a == "--dump-state" && i + 1 < argc) {
+            // What the shell would be reading. The bridge that pushes it does not exist yet, so
+            // this is the seam where it will attach -- and until then the only way to check that
+            // the *application* produces the state, rather than that the header can.
+            statePath = argv[++i];
         } else {
             scenePath = a;
         }
@@ -344,7 +353,7 @@ int main(int argc, char** argv) {
                      "usage: makina_viewport <scene.makina.json> [--keymap maya|blender]\n"
                      "       [--frames N] [--screenshot <path>]\n"
                      "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n"
-                     "       [--actions \"view.front view.genuine\"]\n");
+                     "       [--actions \"view.front view.genuine\"] [--dump-state <path>]\n");
         return 2;
     }
 
@@ -571,7 +580,12 @@ int main(int argc, char** argv) {
 
         int          frame = 0;
         std::size_t  scriptAt = 0;
+        // The last frame's wall time, for the status bar. One frame rather than an average: the
+        // question a modeller is asking is "did that edit just cost me something", and a running
+        // mean smooths away the spike they are asking about.
+        double lastFrameMs = 0.0;
         while (window.alive()) {
+            const auto frameStart = std::chrono::steady_clock::now();
             app::FrameInput in = window.pump();
             int scriptedMods = makina::mods::kNone;
             if (scriptAt < scriptedKeys.size()) {
@@ -1093,8 +1107,41 @@ int main(int argc, char** argv) {
             }
             dev.end();
 
+            lastFrameMs = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - frameStart)
+                              .count();
+
             if (frameLimit > 0 && ++frame >= frameLimit) {
                 break;
+            }
+        }
+
+        if (!statePath.empty()) {
+            // Built from the same three things the bridge will have: the tree as it stands, what
+            // is selected, and the numbers the frame loop already keeps.
+            makina::ViewNumbers numbers;
+            numbers.distance = camera.distance;
+            numbers.frameMs = lastFrameMs;
+            numbers.live = transform.active() ? transform.status() : std::string();
+
+            std::ofstream out(statePath, std::ios::binary);
+            if (!out) {
+                std::fprintf(stderr, "warning: could not write the view state to '%s'\n",
+                             statePath.c_str());
+            } else {
+                out << "{";
+                bool first = true;
+                for (const auto& kv : makina::viewState(history.current(), selection, numbers)) {
+                    out << (first ? "" : ",") << "\n  " << makina::detail::jsonQuote(kv.first)
+                        << ": ";
+                    // A list is already JSON and goes in as it is; anything else is a string.
+                    out << (kv.second.size() > 1 && kv.second.front() == '['
+                                ? kv.second
+                                : makina::detail::jsonQuote(kv.second));
+                    first = false;
+                }
+                out << "\n}\n";
+                std::printf("wrote %s\n", statePath.c_str());
             }
         }
 
