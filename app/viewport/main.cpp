@@ -523,6 +523,11 @@ int main(int argc, char** argv) {
         // A list, not an id, and every edit goes through topLevel() so a solid inside another
         // selected solid is reached once rather than twice.
         makina::Selection selection = scriptedSelection;
+        // A rectangle in progress. Screen coordinates, because that is what the drag is in and
+        // converting to world here would have to be undone to test against the film.
+        bool   boxing = false;
+        double boxStartU = 0.0;
+        double boxStartV = 0.0;
         int           descendDepth = 0;
         std::uint32_t lastPickedId = 0;
         makina::TransformSession transform;
@@ -585,7 +590,16 @@ int main(int argc, char** argv) {
 
                 if (e.button != makina::MouseButton::None) {
                     const makina::Action action = keymap.resolve(e);
-                    if (action == "view.orbit") {
+                    if (action == "select.box") {
+                        // The rectangle is remembered rather than acted on: what it selects is
+                        // decided when the button comes up. Selecting every frame of the drag
+                        // would make the selection whatever the cursor last passed over.
+                        if (!boxing) {
+                            boxing = true;
+                            boxStartU = in.cursorU;
+                            boxStartV = in.cursorV;
+                        }
+                    } else if (action == "view.orbit") {
                         camera = makina::orbit(camera, in.dx, in.dy);
                     } else if (action == "view.pan") {
                         // dy is inverted: screen y grows downward, the camera's up does not.
@@ -593,6 +607,20 @@ int main(int argc, char** argv) {
                     } else if (action == "view.dolly") {
                         camera = makina::dolly(camera, -in.dy * 20.0, sceneRadius);
                     }
+                }
+            }
+
+            // The rectangle, resolved on release. A drag that stayed inside a few pixels is a
+            // click that shook, and treating it as a rectangle would clear the selection the user
+            // had just made.
+            if (boxing && !in.leftDown) {
+                boxing = false;
+                const double du = in.cursorU - boxStartU;
+                const double dv = in.cursorV - boxStartV;
+                if (du * du + dv * dv > 1.0e-5) {
+                    selection = makina::pickInRect(history.current(), camera, boxStartU, boxStartV,
+                                                   in.cursorU, in.cursorV, aspect);
+                    std::printf("rectangle selected %zu node(s)\n", selection.size());
                 }
             }
 

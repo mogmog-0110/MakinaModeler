@@ -78,6 +78,7 @@ inline const std::vector<std::string>& knownActions() {
         "view.back",       "view.left",        "view.bottom",
         "view.toggleOrthographic",
         "select.pick",     "select.add",       "select.descend",  "select.clear",
+        "select.box",
         "edit.move",       "edit.rotate",      "edit.scale",
         "edit.duplicate",  "edit.delete",
         "edit.undo",       "edit.redo",
@@ -285,6 +286,7 @@ inline const char* mayaKeymapJson() {
 
     { "action": "select.pick",    "button": "left", "drag": false },
     { "action": "select.add",     "button": "left", "drag": false, "modifiers": ["shift"] },
+    { "action": "select.box",     "button": "left", "drag": true },
     { "action": "select.descend", "button": "left", "drag": false, "modifiers": ["ctrl"] },
 
     { "action": "view.fitSelected", "key": "F" },
@@ -319,6 +321,7 @@ inline const char* blenderKeymapJson() {
 
     { "action": "select.pick",    "button": "left", "drag": false },
     { "action": "select.add",     "button": "left", "drag": false, "modifiers": ["shift"] },
+    { "action": "select.box",     "button": "left", "drag": true },
     { "action": "select.descend", "button": "left", "drag": false, "modifiers": ["alt"] },
 
     { "action": "view.fitSelected", "key": "NUMPADPERIOD" },

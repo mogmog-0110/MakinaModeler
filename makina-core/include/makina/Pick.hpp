@@ -181,4 +181,56 @@ inline PickResult pickThroughCamera(const Scene& s, const Camera& c, double u, d
     return pick(s, origin, dir, c.distance + c.farClip, depth);
 }
 
+
+/// What a dragged rectangle selects.
+///
+/// Defined through the same ladder a click walks, so the two agree: a rectangle around one solid
+/// selects what clicking it would have selected, not the primitive inside it. Any other definition
+/// leaves the user with two selection tools that disagree about what an object is.
+///
+/// A node is caught when its own world box overlaps the rectangle. That is a bound rather than the
+/// surface -- Camera.hpp's boxTouchesRect says why being generous is the right direction here.
+///
+/// Order is the tree's, not the drag's. There is no meaningful "first" in a rectangle, and a
+/// stable order is what makes a scripted check comparable.
+[[nodiscard]] inline std::vector<std::uint32_t> pickInRect(const Scene& s, const Camera& c,
+                                                           double u0, double v0, double u1,
+                                                           double v1, double aspect,
+                                                           int depth = 0) {
+    std::vector<std::uint32_t> out;
+    if (s.nodes.count == 0) {
+        return out;
+    }
+
+    std::vector<detail::PrimRef> prims;
+    detail::collectPrims(s, 0, detail::ancestorMatrix(s, 0), prims, Fidelity{});
+
+    for (const detail::PrimRef& ref : prims) {
+        const BoundsResult b = worldBounds(s, ref.index);
+        if (!boxTouchesRect(c, b.box, aspect, u0, v0, u1, v1)) {
+            continue;
+        }
+        const std::vector<std::uint16_t> ladder = detail::selectionLadder(s, ref.index);
+        if (ladder.empty()) {
+            continue;
+        }
+        const std::size_t at = depth < 0 ? 0
+                               : static_cast<std::size_t>(depth) >= ladder.size()
+                                   ? ladder.size() - 1
+                                   : static_cast<std::size_t>(depth);
+        const std::uint32_t id = s.nodes[ladder[at]].id;
+        bool already = false;
+        for (const std::uint32_t seen : out) {
+            if (seen == id) {
+                already = true;
+                break;
+            }
+        }
+        if (!already) {
+            out.push_back(id);
+        }
+    }
+    return out;
+}
+
 }  // namespace makina

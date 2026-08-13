@@ -321,4 +321,98 @@ inline void cameraRay(const Camera& c, double u, double v, double aspect, double
     }
 }
 
+
+/// Where a world point lands on the film, in the same units cameraRay takes.
+///
+/// The inverse of cameraRay, and tested as one: projecting a point and then shooting a ray through
+/// the result has to put the ray back through the point. Writing a projection separately from the
+/// ray generator is how a picture and a click come to disagree by half a pixel and nobody can say
+/// which of the two is wrong.
+///
+/// Returns false when the point is behind a perspective eye. There is no screen position for it --
+/// the naive formula produces one, mirrored through the centre, and a box select written on top of
+/// that quietly grabs things behind the camera.
+[[nodiscard]] inline bool projectToScreen(const Camera& c, const double p[3], double aspect,
+                                          double& u, double& v) {
+    double right[3], up[3], fwd[3], eye[3];
+    cameraBasis(c, right, up);
+    cameraForward(c, fwd);
+    cameraEye(c, eye);
+
+    const double d[3] = {p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]};
+    const double x = d[0] * right[0] + d[1] * right[1] + d[2] * right[2];
+    const double y = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+
+    if (c.orthographic) {
+        const double h = c.orthoHeight;
+        u = x / (2.0 * h * aspect);
+        v = y / (2.0 * h);
+        return true;
+    }
+
+    const double z = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+    if (z <= 1e-9) {
+        return false;
+    }
+    const double tanHalfV = std::tan(c.fovY * detail::kCamPi / 360.0);
+    u = x / (z * 2.0 * tanHalfV * aspect);
+    v = y / (z * 2.0 * tanHalfV);
+    return true;
+}
+
+/// Whether a world box overlaps a rectangle on the film.
+///
+/// The box's eight corners are projected and their screen bounds tested against the rectangle.
+/// That is a bound of a bound: a long thin solid lying diagonally across the view claims more of
+/// the screen than it covers, so a box select can catch one whose surface the rectangle misses.
+/// The alternative is projecting the actual solid, which a distance field cannot do without
+/// marching it, and being generous is the direction a selection should be wrong in -- a rectangle
+/// that misses something it visibly crossed reads as broken, one that catches a neighbour reads as
+/// a slip of the hand.
+///
+/// A box with any corner behind a perspective eye is treated as overlapping when part of it is in
+/// front, because a solid the camera is standing inside is on screen even though its corners have
+/// no screen position.
+[[nodiscard]] inline bool boxTouchesRect(const Camera& c, const Aabb& box, double aspect,
+                                         double u0, double v0, double u1, double v1) {
+    if (!box.valid) {
+        return false;
+    }
+    const double loU = u0 < u1 ? u0 : u1;
+    const double hiU = u0 < u1 ? u1 : u0;
+    const double loV = v0 < v1 ? v0 : v1;
+    const double hiV = v0 < v1 ? v1 : v0;
+
+    double minU = 0.0, maxU = 0.0, minV = 0.0, maxV = 0.0;
+    int projected = 0;
+    bool behind = false;
+    for (int corner = 0; corner < 8; ++corner) {
+        const double p[3] = {(corner & 1) ? box.hi[0] : box.lo[0],
+                             (corner & 2) ? box.hi[1] : box.lo[1],
+                             (corner & 4) ? box.hi[2] : box.lo[2]};
+        double u = 0.0, v = 0.0;
+        if (!projectToScreen(c, p, aspect, u, v)) {
+            behind = true;
+            continue;
+        }
+        if (projected == 0) {
+            minU = maxU = u;
+            minV = maxV = v;
+        } else {
+            minU = u < minU ? u : minU;
+            maxU = u > maxU ? u : maxU;
+            minV = v < minV ? v : minV;
+            maxV = v > maxV ? v : maxV;
+        }
+        ++projected;
+    }
+    if (projected == 0) {
+        return false;
+    }
+    if (behind) {
+        return true;
+    }
+    return maxU >= loU && minU <= hiU && maxV >= loV && minV <= hiV;
+}
+
 }  // namespace makina
