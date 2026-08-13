@@ -460,6 +460,43 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
 /// of operands, so 32 covers a boolean with four billion children.
 constexpr int kMaxEvalStack = 32;
 
+/// One primitive of the program, at a world point.
+///
+/// Lifted out so the distance walk and the surface walk below cannot drift: two copies of a
+/// primitive table is exactly the kind of difference that shows up as one shape being subtly the
+/// wrong size in one of the two answers, with nothing to point at.
+inline double evalLeaf(const EvalNode& n, const double wp[3]) {
+    const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];
+    const double y = n.inv[4] * wp[0] + n.inv[5] * wp[1] + n.inv[6] * wp[2] + n.inv[7];
+    const double z = n.inv[8] * wp[0] + n.inv[9] * wp[1] + n.inv[10] * wp[2] + n.inv[11];
+
+    double d;
+    switch (static_cast<EvalOp>(n.op)) {
+        case EvalOp::Sphere:
+            d = mkSdSphere(x, y, z, n.params[0]);
+            break;
+        case EvalOp::BoxCentered:
+            d = mkSdBoxCentered(x, y, z, n.params[0], n.params[1], n.params[2]);
+            break;
+        case EvalOp::CylinderCentered:
+            d = mkSdCylinderCentered(x, y, z, n.params[0], n.params[1]);
+            break;
+        case EvalOp::ConeCentered:
+            // params[2] is the height's sign: a cone authored with a negative height points the
+            // other way, and mirroring local Y is how that survives centering.
+            d = mkSdConeCentered(x, y * n.params[2], z, n.params[0], n.params[1]);
+            break;
+        case EvalOp::Torus:
+            d = mkSdTorus(x, y, z, n.params[0], n.params[1]);
+            break;
+        default:
+            // Plane: the height was folded into the transform, so the half space is y <= 0.
+            d = mkSdPlane(y, 0.0);
+            break;
+    }
+    return d * n.params[3];
+}
+
 /// Walks the emitted program on the CPU, with exactly the semantics the shader implements.
 ///
 /// This exists to be compared against Eval.hpp: the two take different routes to the same number,
@@ -492,38 +529,65 @@ inline double evalProgram(const EvalProgram& prog, const double wp[3]) {
             return kEmpty;
         }
 
-        const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];
-        const double y = n.inv[4] * wp[0] + n.inv[5] * wp[1] + n.inv[6] * wp[2] + n.inv[7];
-        const double z = n.inv[8] * wp[0] + n.inv[9] * wp[1] + n.inv[10] * wp[2] + n.inv[11];
-
-        double d;
-        switch (static_cast<EvalOp>(n.op)) {
-            case EvalOp::Sphere:
-                d = mkSdSphere(x, y, z, n.params[0]);
-                break;
-            case EvalOp::BoxCentered:
-                d = mkSdBoxCentered(x, y, z, n.params[0], n.params[1], n.params[2]);
-                break;
-            case EvalOp::CylinderCentered:
-                d = mkSdCylinderCentered(x, y, z, n.params[0], n.params[1]);
-                break;
-            case EvalOp::ConeCentered:
-                // params[2] is the height's sign: a cone authored with a negative height points
-                // the other way, and mirroring local Y is how that survives centering.
-                d = mkSdConeCentered(x, y * n.params[2], z, n.params[0], n.params[1]);
-                break;
-            case EvalOp::Torus:
-                d = mkSdTorus(x, y, z, n.params[0], n.params[1]);
-                break;
-            default:
-                // Plane: the height was folded into the transform, so the half space is y <= 0.
-                d = mkSdPlane(y, 0.0);
-                break;
-        }
-        stack[sp++] = d * n.params[3];
+        stack[sp++] = evalLeaf(n, wp);
     }
 
     return sp > 0 ? stack[0] : kEmpty;
+}
+
+/// What the program says about one point: how far, and what the nearest surface wears.
+struct ProgramSurface {
+    double        distance = kEmpty;
+    std::uint32_t materialId = kNoMaterial;
+    std::uint32_t pigmentId = kNoPigment;
+};
+
+/// The same walk as evalProgram, carrying the material and pattern the shader carries.
+///
+/// Separate from evalProgram for the reason the generated shader has two functions: the march
+/// calls that one thousands of times per pixel and this one once per hit.
+///
+/// The selection rules are the shader's, Difference keeping the left operand's material included.
+/// That one matters more than it looks -- the exporter hands POV a difference whose blade wears
+/// the body's texture, so anything that compared the blade's own material would be comparing a
+/// value neither renderer ever reads.
+inline ProgramSurface evalProgramSurface(const EvalProgram& prog, const double wp[3]) {
+    if (prog.nodes.empty()) {
+        return ProgramSurface{};
+    }
+
+    ProgramSurface stack[kMaxEvalStack];
+    int sp = 0;
+
+    for (const EvalNode& n : prog.nodes) {
+        if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
+            if (sp < 2) {
+                return ProgramSurface{};
+            }
+            const ProgramSurface b = stack[--sp];
+            const ProgramSurface a = stack[--sp];
+            if (static_cast<EvalOp>(n.op) == EvalOp::Union) {
+                stack[sp++] = a.distance < b.distance ? a : b;
+            } else if (static_cast<EvalOp>(n.op) == EvalOp::Difference) {
+                ProgramSurface r = a;
+                r.distance = a.distance > -b.distance ? a.distance : -b.distance;
+                stack[sp++] = r;
+            } else {
+                stack[sp++] = a.distance > b.distance ? a : b;
+            }
+            continue;
+        }
+
+        if (sp >= kMaxEvalStack) {
+            return ProgramSurface{};
+        }
+        ProgramSurface leaf;
+        leaf.distance = evalLeaf(n, wp);
+        leaf.materialId = n.materialId;
+        leaf.pigmentId = n.pigmentId;
+        stack[sp++] = leaf;
+    }
+    return sp > 0 ? stack[0] : ProgramSurface{};
 }
 
 /// Turns the authoring scene into the program the GPU walks.

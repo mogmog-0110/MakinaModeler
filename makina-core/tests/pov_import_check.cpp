@@ -2,8 +2,13 @@
 //
 // **Round trip.** A scene exported to POV and read back has to be the same solid. Not the same
 // file -- the exporter writes transforms as text and the reader turns them into nodes, so the tree
-// differs by construction. What must survive is the geometry, and the way to ask that is to sample
-// the distance field of both and compare.
+// differs by construction. What must survive is the geometry and the appearance, and the way to
+// ask is to sample the distance field of both and to compare, surface by surface, the bytes the
+// GPU would be handed.
+//
+// The appearance half was added after the geometry half had reported an exact match for months
+// while the reader was throwing away every `filter` it read. "The round trip is exact" is only
+// worth what it names: this one now names both.
 //
 // **Refusal.** The other half is that anything not represented stops the read or is named. A
 // reader that silently drops what it cannot do produces a scene that loaded, rendered, and is not
@@ -16,10 +21,13 @@
 
 #include <makina/Bounds.hpp>
 #include <makina/Eval.hpp>
+#include <makina/Flatten.hpp>
 #include <makina/Pov.hpp>
 #include <makina/PovImport.hpp>
+#include <makina/RenderMaterial.hpp>
 #include <makina/SceneJson.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -93,6 +101,105 @@ double scaleOf(const makina::Scene& s) {
     return r > 1e-9 ? r : 1.0;
 }
 
+/// A lattice through the scene's bounds, the same one the geometry half samples.
+std::vector<std::array<double, 3>> latticePoints(const makina::Scene& s) {
+    const makina::Aabb box = makina::worldBounds(s).box;
+    std::vector<std::array<double, 3>> out;
+    if (!box.valid) {
+        return out;
+    }
+    double lo[3], hi[3];
+    for (int i = 0; i < 3; ++i) {
+        const double pad = (box.hi[i] - box.lo[i]) * 0.25 + 0.1;
+        lo[i] = box.lo[i] - pad;
+        hi[i] = box.hi[i] + pad;
+    }
+    constexpr int kSteps = 11;
+    for (int i = 0; i < kSteps; ++i) {
+        for (int j = 0; j < kSteps; ++j) {
+            for (int k = 0; k < kSteps; ++k) {
+                out.push_back({lo[0] + (hi[0] - lo[0]) * i / (kSteps - 1),
+                               lo[1] + (hi[1] - lo[1]) * j / (kSteps - 1),
+                               lo[2] + (hi[2] - lo[2]) * k / (kSteps - 1)});
+            }
+        }
+    }
+    return out;
+}
+
+/// Every float the surface nearest a point carries, in one array, so a mismatch names an index.
+///
+/// Read through the program's own selection rules rather than off a node, because a node's
+/// material is not always the one that reaches the picture: a difference takes the body's, and
+/// the exporter writes the .pov that way too. Comparing per node would report a disagreement
+/// about a value neither renderer ever looks at.
+std::vector<float> appearanceAt(const makina::Scene& s, const makina::EvalProgram& prog,
+                                const std::array<double, 3>& p) {
+    const makina::ProgramSurface hit = makina::evalProgramSurface(prog, p.data());
+    const makina::GpuMaterial m =
+        hit.materialId < s.materials.count ? makina::toGpuMaterial(s.materials[hit.materialId])
+                                           : makina::defaultGpuMaterial();
+    std::vector<float> v;
+    const float* mf = reinterpret_cast<const float*>(&m);
+    for (std::size_t i = 0; i < sizeof(makina::GpuMaterial) / sizeof(float); ++i) {
+        v.push_back(mf[i]);
+    }
+    // A pattern and the space it stands in. -1 for "no pattern", so a surface that gained or lost
+    // one differs at this entry rather than reading past the table.
+    if (hit.pigmentId == makina::kNoPigment || hit.pigmentId >= prog.pigments.size()) {
+        v.push_back(-1.0f);
+        return v;
+    }
+    const makina::GpuPigment& g = prog.pigments[hit.pigmentId];
+    v.push_back(static_cast<float>(g.pattern.type));
+    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.a[i]); }
+    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.b[i]); }
+    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.scale[i]); }
+    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.translate[i]); }
+    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.axis[i]); }
+    for (int i = 0; i < 12; ++i) { v.push_back(g.inv[i]); }
+    return v;
+}
+
+/// The appearance half of the round trip: what paints each sampled point, before and after.
+void compareAppearance(const makina::Scene& before, const makina::Scene& after) {
+    const makina::EvalProgram pa = makina::flatten(before);
+    const makina::EvalProgram pb = makina::flatten(after);
+    const std::vector<std::array<double, 3>> pts = latticePoints(before);
+
+    float worst = 0.0f;
+    float worstBefore = 0.0f;
+    float worstAfter = 0.0f;
+    std::size_t worstField = 0;
+    std::size_t compared = 0;
+    for (const std::array<double, 3>& p : pts) {
+        const std::vector<float> a = appearanceAt(before, pa, p);
+        const std::vector<float> b = appearanceAt(after, pb, p);
+        if (a.size() != b.size()) {
+            check(false, "a point gained or lost its pattern in the round trip");
+            return;
+        }
+        ++compared;
+        for (std::size_t f = 0; f < a.size(); ++f) {
+            const float d = std::fabs(a[f] - b[f]);
+            if (d > worst) {
+                worst = d;
+                worstField = f;
+                worstBefore = a[f];
+                worstAfter = b[f];
+            }
+        }
+    }
+    // Everything compared is a color in 0..1, a small exponent, or a matrix entry of the same
+    // order as the scene, and the file carries them as decimal text. A part in a hundred thousand
+    // is what that costs; larger is a value that changed, not one that was printed.
+    check(worst <= 1.0e-5f,
+          "field " + std::to_string(worstField) + " went from " + std::to_string(worstBefore) +
+              " to " + std::to_string(worstAfter) + " in the round trip");
+    std::printf("    %zu points, worst appearance difference %.2e\n", compared,
+                static_cast<double>(worst));
+}
+
 void roundTrip(const std::string& path) {
     std::printf("%s\n", path.c_str());
     const makina::Scene original = makina::parseScene(readFile(path));
@@ -140,6 +247,7 @@ void roundTrip(const std::string& path) {
 
     std::printf("    %u nodes -> %u after the round trip, worst field difference %.2e\n",
                 original.nodes.count, back.scene.nodes.count, worst);
+    compareAppearance(original, back.scene);
 }
 
 /// Reads a fragment and expects it to be refused, with the reason mentioning `because`.

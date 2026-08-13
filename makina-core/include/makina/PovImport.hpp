@@ -531,6 +531,154 @@ private:
         return ior;
     }
 
+    /// One `color` entry of a pigment or a color_map, as three floats in 0..1.
+    ///
+    /// POV allows the keyword pair `color rgb <...>`, so the leading words are eaten until the
+    /// vector is reached. The filter that may follow is not read here: a color_map entry that was
+    /// half transparent is not a thing this model's two-stop pigment can hold.
+    void readMapColor(float out[3]) {
+        while (isWord("color") || isWord("rgb") || isWord("srgb") || isWord("rgbf") ||
+               isWord("rgbt") || isWord("rgbft")) {
+            take();
+        }
+        double c[3];
+        vector3(c);
+        for (int i = 0; i < 3; ++i) {
+            out[i] = static_cast<float>(c[i]);
+        }
+    }
+
+    /// `color_map { [0.0 color ...] [1.0 color ...] }`, of which two stops are representable.
+    ///
+    /// A map with more stops is reported rather than truncated. Keeping the first and last would
+    /// render a smooth ramp where the file asked for bands, which is a picture nobody would
+    /// question and nobody could compare.
+    void readColorMap(Pigment& g) {
+        take();
+        expectPunct('{');
+        int stops = 0;
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("a color_map block was not closed");
+            }
+            if (!isPunct('[')) {
+                skipValue();
+                continue;
+            }
+            take();
+            (void)number();   // the position, which a two-stop pigment fixes at 0 and 1
+            float c[3] = {0, 0, 0};
+            readMapColor(c);
+            while (!isPunct(']')) {
+                if (peek().kind == PovTokenKind::End) {
+                    refuse("a color_map entry was not closed");
+                }
+                skipValue();
+            }
+            take();
+            if (stops == 0) {
+                for (int i = 0; i < 3; ++i) { g.a[i] = c[i]; }
+            } else if (stops == 1) {
+                for (int i = 0; i < 3; ++i) { g.b[i] = c[i]; }
+            }
+            ++stops;
+        }
+        take();
+        if (stops > 2) {
+            note("color_map with " + std::to_string(stops) + " stops");
+        }
+    }
+
+    /// The pattern of a pigment, and the transform POV applies to it.
+    ///
+    /// Only the three with no noise in them. The rest of POV's patterns read its own permutation
+    /// table, and without that exact table what comes out is "something that looks like marble" --
+    /// which is the failure this reader exists to refuse.
+    void readPatternInto(Material& m) {
+        Pigment g{};
+        g.scale[0] = g.scale[1] = g.scale[2] = 1.0f;
+        g.axis[0] = 1.0f;
+
+        const std::string kind = take().text;
+        if (kind == "checker") {
+            g.type = static_cast<std::uint8_t>(PigmentType::Checker);
+            // The two colors follow the keyword directly, with no map.
+            if (isWord("color") || isWord("rgb") || isWord("srgb")) {
+                readMapColor(g.a);
+            }
+            if (isWord("color") || isWord("rgb") || isWord("srgb")) {
+                readMapColor(g.b);
+            }
+        } else if (kind == "gradient") {
+            g.type = static_cast<std::uint8_t>(PigmentType::Gradient);
+            double v[3];
+            vector3(v);
+            for (int i = 0; i < 3; ++i) {
+                g.axis[i] = static_cast<float>(v[i]);
+            }
+        } else {
+            g.type = static_cast<std::uint8_t>(PigmentType::Radial);
+        }
+
+        // The modifiers, which POV lets follow in any order and any number.
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("a pigment block was not closed");
+            }
+            if (isWord("color_map")) {
+                readColorMap(g);
+                continue;
+            }
+            if (isWord("scale") || isWord("translate")) {
+                const bool isScale = isWord("scale");
+                take();
+                double v[3];
+                if (peek().kind == PovTokenKind::Number && !isPunct('<')) {
+                    // POV takes a bare number as the same value on all three axes.
+                    const double u = number();
+                    v[0] = v[1] = v[2] = u;
+                } else {
+                    vector3(v);
+                }
+                for (int i = 0; i < 3; ++i) {
+                    if (isScale) {
+                        g.scale[i] *= static_cast<float>(v[i]);
+                    } else {
+                        g.translate[i] += static_cast<float>(v[i]);
+                    }
+                }
+                continue;
+            }
+            if (isWord("rotate")) {
+                // Pigment has three axes of scale and a translation and nowhere to put a rotation,
+                // so a rotated pattern would come out aligned to the wrong axes. Named, not turned
+                // into the nearest thing that parses.
+                note("pigment rotate");
+                skipValue();
+                continue;
+            }
+            if (peek().kind == PovTokenKind::Word) {
+                note("pigment " + take().text);
+                skipValue();
+                continue;
+            }
+            skipValue();
+        }
+
+        if (m_pigments.size() >= Scene::kMaxPigments) {
+            refuse("the scene needs more than this model's " +
+                   std::to_string(Scene::kMaxPigments) + " pigments");
+        }
+        for (std::size_t i = 0; i < m_pigments.size(); ++i) {
+            if (std::memcmp(&m_pigments[i], &g, sizeof(Pigment)) == 0) {
+                m.textureId = static_cast<std::int32_t>(i);
+                return;
+            }
+        }
+        m_pigments.push_back(g);
+        m.textureId = static_cast<std::int32_t>(m_pigments.size() - 1);
+    }
+
     void readAppearanceInto(Material& m) {
         const std::string kind = take().text;   // texture | pigment | finish | normal
 
@@ -563,6 +711,14 @@ private:
             }
             if (peek().kind != PovTokenKind::Word) {
                 skipValue();
+                continue;
+            }
+
+            // A pattern, before the plain-color branch below: `checker` is followed by the two
+            // colors it alternates, so reading the first of them as this pigment's flat color
+            // would give a solid surface in the color of one square.
+            if (isWord("checker") || isWord("gradient") || isWord("radial")) {
+                readPatternInto(m);
                 continue;
             }
 
@@ -984,13 +1140,22 @@ private:
                 refuse("an object block was not closed");
             }
 
-            if (isWord("texture") || isWord("pigment") || isWord("finish") || isWord("normal")) {
-                // The index of refraction survives a later texture. POV hangs it on the object and
-                // the texture on the surface, so a file may write either first and the second must
-                // not undo the first.
+            if (isWord("texture")) {
+                // A whole texture replaces whatever came before it. The index of refraction does
+                // not: POV hangs that on the object and the texture on the surface, so a file may
+                // write either first and the second must not undo the first.
                 const float ior = appearance.ior;
                 appearance = readAppearance();
                 appearance.ior = ior;
+                dressed = true;
+                continue;
+            }
+            if (isWord("pigment") || isWord("finish") || isWord("normal")) {
+                // Bare, these are items of one implicit texture and each says only its own part,
+                // so they accumulate. Starting a fresh material per block was the bug that made
+                // every exported scene come back white: the exporter writes `pigment` and then
+                // `finish`, and the finish was overwriting the color that had just been read.
+                readAppearanceInto(appearance);
                 dressed = true;
                 continue;
             }
@@ -1027,9 +1192,26 @@ private:
         }
         take();
         if (dressed) {
-            node.material = materialIndex(appearance);
+            // On the shape, not on the transform wrapping it. POV writes the texture inside the
+            // object and the translate after it, and both apply to the object -- so the shape is
+            // where the file put it. It matters beyond tidiness: a pattern is read in the space of
+            // whatever wears it, and a checker hung on the wrapper instead would be read in world
+            // space and come out a square out of step.
+            shapeOf(node).material = materialIndex(appearance);
         }
         return node;
+    }
+
+    /// The shape inside any transforms this reader wrapped around it.
+    ///
+    /// A transform node here always has exactly one child, because that is the only way this
+    /// reader builds one; anything else is left alone rather than guessed at.
+    static PovNode& shapeOf(PovNode& n) {
+        PovNode* p = &n;
+        while (isTransform(p->op) && p->children.size() == 1) {
+            p = &p->children[0];
+        }
+        return *p;
     }
 
     /// One `transform { ... }`, as the list of moves it stands for.
@@ -1147,6 +1329,9 @@ private:
         for (std::size_t i = 0; i < m_materials.size(); ++i) {
             s.materials[s.materials.count++] = m_materials[i];
         }
+        for (std::size_t i = 0; i < m_pigments.size(); ++i) {
+            s.pigments[s.pigments.count++] = m_pigments[i];
+        }
         emit(s, root, 0);
         return s;
     }
@@ -1197,6 +1382,7 @@ private:
     std::map<std::string, double> m_numbers;
     std::map<std::string, std::vector<double>> m_vectors;
     std::map<std::string, Material> m_textures;
+    std::vector<Pigment> m_pigments;
     std::map<std::string, PovNode> m_objects;
     std::map<std::string, std::vector<PovMove>> m_transforms;
     /// The components past the third of the last `<...>` literal read.
