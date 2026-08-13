@@ -25,6 +25,7 @@
 #include <makina/Flatten.hpp>
 #include <makina/Keymap.hpp>
 #include <makina/Pick.hpp>
+#include <makina/Selection.hpp>
 #include <makina/RenderMaterial.hpp>
 #include <makina/History.hpp>
 #include <makina/SceneJson.hpp>
@@ -59,6 +60,66 @@ struct alignas(256) FrameParams {
     float selMin[3];    float selValid;
     float selMax[3];    float pad1;
 };
+
+/// One transform, applied to every selected solid.
+///
+/// Through topLevel(), so a solid inside another selected solid moves once. Applied in turn to the
+/// scene the previous one produced: each returns a whole tree, and threading them is what makes
+/// "move these three" one edit in the history rather than three.
+///
+/// Refuses as a whole when any one of them refuses. Half a move is worse than none -- the user
+/// asked for one gesture and would have to work out which half landed before undoing it.
+makina::EditResult transformSelection(const makina::Scene& scene,
+                                      const makina::Selection& selection,
+                                      makina::TransformKind kind, makina::TransformAxis axis,
+                                      double value) {
+    makina::EditResult out;
+    out.scene = scene;
+    out.ok = false;
+    const makina::Selection targets = makina::topLevel(scene, selection);
+    if (targets.empty()) {
+        out.why = "nothing selected";
+        return out;
+    }
+    for (const std::uint32_t id : targets) {
+        const makina::EditResult r = makina::applyTransform(out.scene, id, kind, axis, value);
+        if (!r.ok) {
+            makina::EditResult fail;
+            fail.scene = scene;
+            fail.ok = false;
+            fail.why = r.why;
+            return fail;
+        }
+        out.scene = r.scene;
+    }
+    out.ok = true;
+    return out;
+}
+
+/// The box around everything selected, or `fallback` when nothing selected is still in the tree.
+makina::Aabb selectionBox(const makina::Scene& scene, const makina::Selection& selection,
+                          const makina::Aabb& fallback) {
+    makina::Aabb box{};
+    for (const std::uint32_t id : selection) {
+        const std::uint16_t index = makina::indexOfId(scene, id);
+        if (index == makina::kNoChild) {
+            continue;
+        }
+        const makina::BoundsResult r = makina::worldBounds(scene, index);
+        if (!r.box.valid) {
+            continue;
+        }
+        if (!box.valid) {
+            box = r.box;
+            continue;
+        }
+        for (int i = 0; i < 3; ++i) {
+            box.lo[i] = box.lo[i] < r.box.lo[i] ? box.lo[i] : r.box.lo[i];
+            box.hi[i] = box.hi[i] > r.box.hi[i] ? box.hi[i] : r.box.hi[i];
+        }
+    }
+    return box.valid ? box : fallback;
+}
 
 std::string readFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -223,7 +284,7 @@ int main(int argc, char** argv) {
     // frame, because that is how the real thing arrives -- feeding them all at once would test a
     // code path the user never takes.
     std::vector<std::string> scriptedKeys;
-    std::uint32_t            scriptedSelection = 0;
+    makina::Selection        scriptedSelection;
     // Writes the tree out on exit, so an edit can be read as numbers rather than judged from a
     // picture. "The image changed" only says something changed.
     std::string savePath;
@@ -241,7 +302,24 @@ int main(int argc, char** argv) {
                 scriptedKeys.push_back(k);
             }
         } else if (a == "--select" && i + 1 < argc) {
-            scriptedSelection = static_cast<std::uint32_t>(std::atoi(argv[++i]));
+            // A comma-separated list, so a scripted run can exercise a selection of several.
+            // That path has no mouse, and a check that could only ever select one thing would
+            // leave the multi-selection edits with nothing driving them.
+            const std::string list = argv[++i];
+            std::size_t at = 0;
+            while (at < list.size()) {
+                const std::size_t comma = list.find(',', at);
+                const std::string one = list.substr(at, comma == std::string::npos
+                                                           ? std::string::npos
+                                                           : comma - at);
+                if (!one.empty()) {
+                    scriptedSelection.push_back(static_cast<std::uint32_t>(std::atoi(one.c_str())));
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                at = comma + 1;
+            }
         } else if (a == "--save" && i + 1 < argc) {
             savePath = argv[++i];
         } else {
@@ -442,7 +520,9 @@ int main(int argc, char** argv) {
         makina::Camera camera;
         camera = makina::frameBox(camera, bounds.box, 1280.0 / 720.0);
 
-        std::uint32_t selectedId = scriptedSelection;
+        // A list, not an id, and every edit goes through topLevel() so a solid inside another
+        // selected solid is reached once rather than twice.
+        makina::Selection selection = scriptedSelection;
         int           descendDepth = 0;
         std::uint32_t lastPickedId = 0;
         makina::TransformSession transform;
@@ -531,14 +611,18 @@ int main(int argc, char** argv) {
                                               : makina::MouseButton::Right;
                 const makina::Action action = keymap.resolve(e);
 
-                if (action == "select.pick" || action == "select.descend") {
+                if (action == "select.pick" || action == "select.add" ||
+                    action == "select.descend") {
                     // Clicking the same thing again with the descend modifier goes one level in;
                     // clicking anything else starts at the top again. Without the reset, a click
                     // on a different part would inherit a depth that means nothing there.
                     const makina::PickResult probe = makina::pickThroughCamera(
                         history.current(), camera, in.cursorU, in.cursorV, aspect, 0);
                     if (!probe.hit) {
-                        selectedId = 0;
+                        // Clicking empty space clears, even with the add modifier held. Blender
+                        // and Maya both do this, and the alternative -- a missed click leaving a
+                        // selection of ten untouched -- reads as the click not registering.
+                        selection.clear();
                         descendDepth = 0;
                         std::printf("selection cleared\n");
                     } else {
@@ -550,7 +634,9 @@ int main(int argc, char** argv) {
                         lastPickedId = probe.primitiveId;
                         const makina::PickResult r = makina::pickThroughCamera(
                             history.current(), camera, in.cursorU, in.cursorV, aspect, descendDepth);
-                        selectedId = r.id;
+                        selection = action == "select.add"
+                                        ? makina::toggleSelected(selection, r.id)
+                                        : makina::selectOnly(r.id);
                         const std::uint16_t index = makina::indexOfId(history.current(), r.id);
                         std::printf("selected id %u  %-16s  %s   (%d level(s) further in)\n", r.id,
                                     index == makina::kNoChild
@@ -630,8 +716,8 @@ int main(int argc, char** argv) {
                 // the transform to a copy rather than to the history is what makes this free to
                 // throw away: a cancel has nothing to undo because nothing was ever committed.
                 if (!abandon && !finish) {
-                    const makina::EditResult p = makina::applyTransform(
-                        history.current(), selectedId, transform.kind(), transform.axis(),
+                    const makina::EditResult p = transformSelection(
+                        history.current(), selection, transform.kind(), transform.axis(),
                         transform.value());
                     if (p.ok) {
                         previewScene = p.scene;
@@ -650,8 +736,8 @@ int main(int argc, char** argv) {
                     transform.cancel();
                     std::printf("\ncancelled\n");
                 } else if (finish) {
-                    const makina::EditResult r = makina::applyTransform(
-                        history.current(), selectedId, transform.kind(), transform.axis(),
+                    const makina::EditResult r = transformSelection(
+                        history.current(), selection, transform.kind(), transform.axis(),
                         transform.value());
                     if (r.ok) {
                         history.commit(r.scene, transform.status());
@@ -678,7 +764,7 @@ int main(int argc, char** argv) {
                 const makina::Action action = keymap.resolve(e);
 
                 if (action == "edit.move" || action == "edit.rotate" || action == "edit.scale") {
-                    if (selectedId == 0) {
+                    if (selection.empty()) {
                         std::printf("nothing selected\n");
                     } else {
                         transform.begin(action == "edit.move"     ? makina::TransformKind::Move
@@ -689,33 +775,50 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 if (action == "edit.delete" || action == "edit.duplicate") {
-                    if (selectedId == 0) {
+                    if (selection.empty()) {
                         std::printf("nothing selected\n");
                         continue;
                     }
                     const bool removing = action == "edit.delete";
-                    const makina::EditResult r =
-                        removing ? makina::removeSubtree(history.current(), selectedId)
-                                 : makina::duplicateSubtree(history.current(), selectedId);
-                    if (!r.ok) {
-                        std::printf("refused: %s\n", r.why.c_str());
+                    const makina::Selection targets =
+                        makina::topLevel(history.current(), selection);
+                    makina::Scene next = history.current();
+                    makina::Selection copies;
+                    bool refused = false;
+                    for (const std::uint32_t id : targets) {
+                        const makina::EditResult r = removing ? makina::removeSubtree(next, id)
+                                                              : makina::duplicateSubtree(next, id);
+                        if (!r.ok) {
+                            std::printf("refused: %s\n", r.why.c_str());
+                            refused = true;
+                            break;
+                        }
+                        next = r.scene;
+                        if (!removing) {
+                            copies.push_back(r.newId);
+                        }
+                    }
+                    if (refused) {
+                        // Nothing is committed when one of them is refused. Half of a delete is
+                        // worse than none: the user asked for one thing and would have to work out
+                        // which half happened before they could undo it.
                         continue;
                     }
-                    history.commit(r.scene, (removing ? "delete id " : "duplicate id ") +
-                                                std::to_string(selectedId));
+                    history.commit(next, (removing ? "delete " : "duplicate ") +
+                                             std::to_string(targets.size()) + " node(s)");
                     if (removing) {
-                        // The selection has to go with it. Leaving the id behind would let the
+                        // The selection has to go with them. Leaving the ids behind would let the
                         // next W move something that is no longer in the tree, and the refusal
                         // would name an id the user cannot see.
-                        std::printf("deleted id %u\n", selectedId);
-                        selectedId = 0;
+                        std::printf("deleted %zu node(s)\n", targets.size());
+                        selection.clear();
                         lastPickedId = 0;
                         descendDepth = 0;
                     } else {
-                        // The copy becomes the selection, so a duplicate-then-move reads as one
-                        // gesture rather than as moving the original by mistake.
-                        selectedId = r.newId;
-                        std::printf("duplicated as id %u\n", selectedId);
+                        // The copies become the selection, so a duplicate-then-move reads as one
+                        // gesture rather than as moving the originals by mistake.
+                        selection = copies;
+                        std::printf("duplicated %zu node(s)\n", copies.size());
                     }
                     rebuild();
                     continue;
@@ -742,10 +845,9 @@ int main(int argc, char** argv) {
                 if (action == "view.fitAll") {
                     camera = makina::frameBox(camera, bounds.box, aspect);
                 } else if (action == "view.fitSelected") {
-                    const std::uint16_t index = makina::indexOfId(history.current(), selectedId);
-                    const makina::Aabb box = index == makina::kNoChild
-                                                 ? bounds.box
-                                                 : makina::worldBounds(history.current(), index).box;
+                    // Everything selected, not just the last one picked: fitting to one of five
+                    // and calling it "fit selected" would leave the other four off screen.
+                    const makina::Aabb box = selectionBox(history.current(), selection, bounds.box);
                     camera = makina::frameBox(camera, box, aspect);
                 } else if (action == "view.front") {
                     camera = makina::lookAlong(camera, makina::ViewAxis::Front);
@@ -762,7 +864,7 @@ int main(int argc, char** argv) {
                 } else if (action == "view.toggleOrthographic") {
                     camera = makina::setOrthographic(camera, !camera.orthographic);
                 } else if (action == "select.clear") {
-                    selectedId = 0;
+                    selection.clear();
                 }
             }
 
@@ -829,9 +931,9 @@ int main(int argc, char** argv) {
             // enough to answer "did my click land on what I meant", which is what step 4 is for.
             // Read from the previewed tree while a drag is running, so the box travels with what
             // is being moved instead of staying where the object used to be.
-            const std::uint16_t selIndex = makina::indexOfId(shown, selectedId);
-            if (selIndex != makina::kNoChild) {
-                const makina::BoundsResult sel = makina::worldBounds(shown, selIndex);
+            if (!selection.empty()) {
+                const makina::Aabb selBox = selectionBox(shown, selection, makina::Aabb{});
+                const makina::BoundsResult sel{selBox, 0};
                 if (sel.box.valid) {
                     for (int i = 0; i < 3; ++i) {
                         p.selMin[i] = static_cast<float>(sel.box.lo[i]);

@@ -53,6 +53,23 @@ call :run erase  13 "DELETE"
 call :run copy   13 "CTRL+D"
 call :run undel  13 "DELETE CTRL+Z"
 
+REM Several at once. --select takes a list so this path can drive a selection the scripted run
+REM has no mouse to build.
+REM
+REM 13 and 60 are the two Differences, in different branches of the tree and neither inside the
+REM other. 14 sits inside 13, which is the case the topLevel rule exists for.
+REM
+REM Ids above 5 throughout, because the saved file writes a material as {"id": N} too and the
+REM search below cannot tell the two apart. This scene has six materials, so 4 reads as present
+REM after the node with that id has gone -- which is exactly how this check first "failed".
+REM
+REM The list is quoted: cmd splits a batch argument on a comma as readily as on a space, so
+REM 13,60 unquoted arrives as two arguments and the run selects only the first.
+call :run multimove "13,60" "W Y 3 ENTER"
+call :run multidel  "13,60" "DELETE"
+call :run multicopy "13,60" "CTRL+D"
+call :run nested    "13,14" "DELETE"
+
 call :differs move   "a committed move must change the tree"
 call :same    cancel "Escape must leave the tree untouched"
 call :same    undo   "undo must restore the tree exactly"
@@ -67,6 +84,16 @@ call :matches wrap   "x.: 2.0"  "the new node must carry the typed X"
 call :differs erase  "delete must remove the subtree"
 call :absent  erase  13 "the deleted node must be gone from the tree"
 call :differs copy   "duplicate must add a subtree"
+
+call :differs multimove "moving two nodes at once must change the tree"
+call :absent  multidel  13 "deleting two must remove the first"
+call :absent  multidel  60 "deleting two must remove the second"
+call :differs multicopy "duplicating two must add two subtrees"
+REM The rule, checked where it is visible: 4 contains 13, so asking to delete both must be the
+REM same edit as deleting 4 alone. Without it the second delete refuses -- the first already
+REM took the node -- and the whole gesture is abandoned, leaving the tree untouched.
+call :absent  nested 14 "deleting a node and something inside it must remove the inner one"
+call :absent  nested 13 "deleting a node and something inside it must remove the outer one"
 call :same    undel  "undo after a delete must put the subtree back"
 
 REM The live preview draws the pending edit through the interpreted pipeline; committing swaps in

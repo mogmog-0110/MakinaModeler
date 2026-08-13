@@ -52,6 +52,10 @@ target_link_libraries(keymap_check PRIVATE makina_core)
 add_executable(transform_check tests/transform_check.cpp)
 target_link_libraries(transform_check PRIVATE makina_core)
 
+# Which nodes an edit reaches when several are picked; no window involved.
+add_executable(selection_check tests/selection_check.cpp)
+target_link_libraries(selection_check PRIVATE makina_core)
+
 # Which material a surface wears. Needs scenes, so it takes the fixtures like the comparisons do.
 add_executable(material_check tests/material_check.cpp)
 target_link_libraries(material_check PRIVATE makina_core)
@@ -106,6 +110,7 @@ if(FIXTURE_SCENES)
     add_test(NAME pick_check COMMAND pick_check)
     add_test(NAME keymap_check COMMAND keymap_check)
     add_test(NAME transform_check COMMAND transform_check)
+    add_test(NAME selection_check COMMAND selection_check)
     add_test(NAME material_check COMMAND material_check ${FIXTURE_SCENES})
     add_test(NAME mesh_compare COMMAND mesh_compare ${FIXTURE_SCENES})
     add_test(NAME pov_import_check COMMAND pov_import_check ${FIXTURE_SCENES})
