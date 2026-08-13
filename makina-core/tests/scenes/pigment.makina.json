@@ -1,11 +1,15 @@
 {
   "format": "makina-scene",
   "version": 1,
-  "nextId": 8,
+  "nextId": 10,
   "materials": [
     {
       "id": 0,
-      "diffuse": [255, 255, 255],
+      "diffuse": [
+        255,
+        255,
+        255
+      ],
       "alpha": 1.0,
       "ambient": 0.15,
       "specular": 0.2,
@@ -14,16 +18,40 @@
       "texture": null,
       "pigment": {
         "type": "checker",
-        "colorA": [230, 230, 235],
-        "colorB": [30, 30, 40],
-        "scale": [0.5, 0.5, 0.5],
-        "translate": [0.0, 0.0, 0.0],
-        "axis": [1.0, 0.0, 0.0]
+        "colorA": [
+          230,
+          230,
+          235
+        ],
+        "colorB": [
+          30,
+          30,
+          40
+        ],
+        "scale": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "translate": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     },
     {
       "id": 1,
-      "diffuse": [255, 255, 255],
+      "diffuse": [
+        255,
+        255,
+        255
+      ],
       "alpha": 1.0,
       "ambient": 0.15,
       "specular": 0.0,
@@ -32,11 +60,73 @@
       "texture": null,
       "pigment": {
         "type": "gradient",
-        "colorA": [240, 90, 40],
-        "colorB": [40, 90, 240],
-        "scale": [1.6, 1.6, 1.6],
-        "translate": [0.0, 0.0, 0.0],
-        "axis": [0.0, 1.0, 0.0]
+        "colorA": [
+          240,
+          90,
+          40
+        ],
+        "colorB": [
+          40,
+          90,
+          240
+        ],
+        "scale": [
+          1.6,
+          1.6,
+          1.6
+        ],
+        "translate": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "diffuse": [
+        255,
+        255,
+        255
+      ],
+      "alpha": 1.0,
+      "ambient": 0.15,
+      "specular": 0.0,
+      "shininess": 1.0,
+      "emission": 0.0,
+      "texture": null,
+      "pigment": {
+        "type": "checker",
+        "colorA": [
+          240,
+          200,
+          80
+        ],
+        "colorB": [
+          40,
+          60,
+          120
+        ],
+        "scale": [
+          0.37,
+          0.37,
+          0.37
+        ],
+        "translate": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ]
       }
     }
   ],
@@ -49,7 +139,9 @@
         "op": "Translate",
         "id": 2,
         "name": "left",
-        "x": -1.3, "y": 0.0, "z": 0.0,
+        "x": -1.3,
+        "y": 0.0,
+        "z": 0.0,
         "children": [
           {
             "op": "Difference",
@@ -57,10 +149,23 @@
             "name": "checkered",
             "material": 0,
             "children": [
-              { "op": "Box", "id": 4, "name": "body",
-                "x1": -0.9, "y1": -0.9, "z1": -0.9,
-                "x2":  0.9, "y2":  0.9, "z2":  0.9 },
-              { "op": "Sphere", "id": 5, "name": "bite", "radius": 1.15 }
+              {
+                "op": "Box",
+                "id": 4,
+                "name": "body",
+                "x1": -0.9,
+                "y1": -0.9,
+                "z1": -0.9,
+                "x2": 0.9,
+                "y2": 0.9,
+                "z2": 0.9
+              },
+              {
+                "op": "Sphere",
+                "id": 5,
+                "name": "bite",
+                "radius": 1.15
+              }
             ]
           }
         ]
@@ -69,10 +174,36 @@
         "op": "Translate",
         "id": 6,
         "name": "right",
-        "x": 1.3, "y": 0.0, "z": 0.0,
+        "x": 1.3,
+        "y": 0.0,
+        "z": 0.0,
         "children": [
-          { "op": "Cylinder", "id": 7, "name": "post", "material": 1,
-            "capPoint": 1.1, "basePoint": -1.1, "radius": 0.8 }
+          {
+            "op": "Cylinder",
+            "id": 7,
+            "name": "post",
+            "material": 1,
+            "capPoint": 1.1,
+            "basePoint": -1.1,
+            "radius": 0.8
+          }
+        ]
+      },
+      {
+        "op": "Translate",
+        "id": 8,
+        "name": "moved",
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2.1,
+        "children": [
+          {
+            "op": "Sphere",
+            "id": 9,
+            "name": "ball",
+            "material": 2,
+            "radius": 0.85
+          }
         ]
       }
     ]

@@ -114,16 +114,6 @@ inline GpuMaterial toGpuMaterial(const Material& m) {
     return g;
 }
 
-/// Every pigment in the scene, ready to upload beside the materials.
-inline std::vector<Pigment> gpuPigments(const Scene& s) {
-    std::vector<Pigment> out;
-    out.reserve(s.pigments.count);
-    for (std::uint32_t i = 0; i < s.pigments.count; ++i) {
-        out.push_back(s.pigments[i]);
-    }
-    return out;
-}
-
 /// Every material in the scene, in index order, ready to upload.
 ///
 /// Returned by value: the caller uploads it once per rebuild, not per frame, and a scene has at

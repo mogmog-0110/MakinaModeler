@@ -553,13 +553,17 @@ int main(int argc, char** argv) {
                     spike::GpuBuffer materialBuffer = dev.createBufferWithData(
                         mats.data(), mats.size() * sizeof(makina::GpuMaterial), L"materials");
 
+                    // From the program, not from the scene: a pattern is fixed in the space of
+                    // the object wearing it, so the table is one entry per (pattern, place)
+                    // pair and only the flatten knows the places.
+                    //
                     // Same rule as the materials: a declared SRV must be bound to something.
-                    std::vector<makina::Pigment> pigs = makina::gpuPigments(scene);
+                    std::vector<makina::GpuPigment> pigs = prog.pigments;
                     if (pigs.empty()) {
-                        pigs.push_back(makina::Pigment{});
+                        pigs.push_back(makina::GpuPigment{});
                     }
                     spike::GpuBuffer pigmentBuffer = dev.createBufferWithData(
-                        pigs.data(), pigs.size() * sizeof(makina::Pigment), L"pigments");
+                        pigs.data(), pigs.size() * sizeof(makina::GpuPigment), L"pigments");
 
                     std::vector<makina::Light> lights;
                     for (std::uint32_t li = 0; li < scene.lights.count; ++li) {
@@ -580,7 +584,7 @@ int main(int argc, char** argv) {
                     dev.uploadBuffer(materialBuffer, mats.size() * sizeof(makina::GpuMaterial),
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                    dev.uploadBuffer(pigmentBuffer, pigs.size() * sizeof(makina::Pigment),
+                    dev.uploadBuffer(pigmentBuffer, pigs.size() * sizeof(makina::GpuPigment),
                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                     dev.uploadBuffer(lightBuffer, lights.size() * sizeof(makina::Light),

@@ -24,7 +24,8 @@
 struct EvalNode {
     uint  op;
     uint  materialId;
-    uint2 _pad;
+    uint  pigmentId;
+    uint  _pad;
     float4 params;
     float4 inv0;
     float4 inv1;
@@ -101,13 +102,16 @@ float evalCsg(float3 wp) {
 /// The boolean rules match scene_codegen.hpp exactly, including Difference keeping the left
 /// operand's material for the cut surface. Two implementations of the same rule is the risk this
 /// project is built to catch, and the interpreted and generated pictures are compared for it.
-float2 evalCsgMaterial(float3 wp) {
+float3 evalCsgMaterial(float3 wp) {
     if (gProgramCount == 0u) {
-        return float2(1.0e30, 255.0);
+        return float3(1.0e30, 255.0, -1.0);
     }
 
     float stack[MK_STACK_MAX];
     float ids[MK_STACK_MAX];
+    // The pattern travels with the material and by the same rule, because a surface that took
+    // one operand's color and the other's pattern would be a mix neither renderer draws.
+    float pigs[MK_STACK_MAX];
     int sp = 0;
 
     for (uint i = 0u; i < gProgramCount; ++i) {
@@ -118,21 +122,28 @@ float2 evalCsgMaterial(float3 wp) {
             float a = stack[sp - 2];
             float ib = ids[sp - 1];
             float ia = ids[sp - 2];
+            float gb = pigs[sp - 1];
+            float ga = pigs[sp - 2];
             sp -= 2;
             float r;
             float id;
+            float pg;
             if (n.op == 16u) {
                 r = min(a, b);
                 id = a < b ? ia : ib;
+                pg = a < b ? ga : gb;
             } else if (n.op == 17u) {
                 r = max(a, -b);
                 id = ia;
+                pg = ga;
             } else {
                 r = max(a, b);
                 id = a > b ? ia : ib;
+                pg = a > b ? ga : gb;
             }
             stack[sp] = r;
             ids[sp] = id;
+            pigs[sp] = pg;
             ++sp;
             continue;
         }
@@ -157,10 +168,13 @@ float2 evalCsgMaterial(float3 wp) {
 
         stack[sp] = d * n.params.w;
         ids[sp] = (float)n.materialId;
+        // 0xFFFFFFFF as a float is not -1, so the sentinel is turned into one here rather
+        // than left to a cast that would hand the lookup a very large index.
+        pigs[sp] = n.pigmentId == 0xFFFFFFFFu ? -1.0 : (float)n.pigmentId;
         ++sp;
     }
 
-    return float2(stack[0], ids[0]);
+    return float3(stack[0], ids[0], pigs[0]);
 }
 
 #endif  // MAKINA_SCENE_INTERPRET_HLSL

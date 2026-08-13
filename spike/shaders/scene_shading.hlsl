@@ -160,8 +160,9 @@ float3 mkReflected(float3 p, float3 n, float3 rd, float eps, float normalEps) {
         if (d < eps) {
             const float3 q = p + dir * t;
             const float3 qn = calcNormal(q, normalEps);
-            MkMaterial qm = mkMaterialAt(evalCsgMaterial(q).y, gMaterialCount);
-            qm.diffuseColor = mkSurfaceColor(qm, qm.textureIndex, q);
+            const float3 qs = evalCsgMaterial(q);
+            MkMaterial qm = mkMaterialAt(qs.y, gMaterialCount);
+            qm.diffuseColor = mkSurfaceColor(qm, qs.z, q);
             return mkLighting(qm, q, qn, -dir, 1.0, eps);
         }
         t += d * gStepScale;
@@ -250,11 +251,12 @@ float4 PSMain(VSOut i) : SV_Target {
         // One more evaluation, at the hit point only, to learn which surface this is. The march
         // and the normal never pay for it (scene_codegen.hpp explains why it is a separate
         // function).
-        MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+        const float3 surf = evalCsgMaterial(p);
+        MkMaterial mat = mkMaterialAt(surf.y, gMaterialCount);
         // The pattern is read at the hit point, in the space the march runs in -- POV transforms a
         // pigment with its object, so a moved solid takes its texture with it rather than sliding
         // through a pattern fixed to the world.
-        mat.diffuseColor = mkSurfaceColor(mat, mat.textureIndex, p);
+        mat.diffuseColor = mkSurfaceColor(mat, surf.z, p);
 
         float3 here = mkLighting(mat, p, n, -rd, ao, hitEps);
 

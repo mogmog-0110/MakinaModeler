@@ -323,12 +323,15 @@ int main(int argc, char** argv) {
             materials = std::make_unique<RingBuffer>(dev.device(), materialBytes);
             materialAddress = materials->write(mats.data(), materialBytes);
 
-            std::vector<makina::Pigment> pigs = makina::gpuPigments(history.current());
-            pigmentCount = history.current().pigments.count;
+            // The program's table, not the scene's: a pattern is fixed in the space of the
+            // solid wearing it, so one pattern on two solids in different places is two
+            // entries and only the flatten knows the places.
+            std::vector<makina::GpuPigment> pigs = prog.pigments;
+            pigmentCount = static_cast<std::uint32_t>(pigs.size());
             if (pigs.empty()) {
-                pigs.push_back(makina::Pigment{});
+                pigs.push_back(makina::GpuPigment{});
             }
-            const std::size_t pigmentBytes = pigs.size() * sizeof(makina::Pigment);
+            const std::size_t pigmentBytes = pigs.size() * sizeof(makina::GpuPigment);
             pigments = std::make_unique<RingBuffer>(dev.device(), pigmentBytes);
             pigmentAddress = pigments->write(pigs.data(), pigmentBytes);
 

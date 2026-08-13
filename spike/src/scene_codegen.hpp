@@ -140,11 +140,11 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
 inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
     std::ostringstream o;
     o << "// Generated for this scene. Do not edit.\n"
-      << "// x = distance, y = material index (255 = none)\n"
-      << "float2 evalCsgMaterial(float3 wp) {\n";
+      << "// x = distance, y = material (255 = none), z = pigment (-1 = none)\n"
+      << "float3 evalCsgMaterial(float3 wp) {\n";
 
     if (prog.nodes.empty()) {
-        o << "    return float2(1.0e30, 255.0);   // nothing renderable in this scene\n}\n";
+        o << "    return float3(1.0e30, 255.0, -1.0);   // nothing renderable in this scene\n}\n";
         return o.str();
     }
 
@@ -163,13 +163,13 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
             const std::string b = stack.back();  stack.pop_back();
             const std::string a = stack.back();  stack.pop_back();
 
-            o << "    float2 " << var << " = ";
+            o << "    float3 " << var << " = ";
             switch (static_cast<makina::EvalOp>(n.op)) {
                 case makina::EvalOp::Union:
                     o << a << ".x < " << b << ".x ? " << a << " : " << b << ";\n";
                     break;
                 case makina::EvalOp::Difference:
-                    o << "float2(max(" << a << ".x, -" << b << ".x), " << a << ".y);\n";
+                    o << "float3(max(" << a << ".x, -" << b << ".x), " << a << ".yz);\n";
                     break;
                 default:
                     o << a << ".x > " << b << ".x ? " << a << " : " << b << ";\n";
@@ -182,8 +182,14 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
         // Same emitter as evalCsg, so the distance a material is attached to is the one the march
         // actually walked. Copying the expressions here instead would let the two drift.
         detail::emitPrimitiveLines(o, n, i, "m");
-        o << "    float2 " << var << " = float2(mt" << i << ", "
-          << detail::flt(static_cast<float>(n.materialId)) << ");\n";
+        // The pigment index rides beside the material so a surface can find both the pattern
+        // it wears and the space that pattern is nailed to. The material alone cannot say the
+        // second: two walls sharing one checker but standing apart need different entries.
+        o << "    float3 " << var << " = float3(mt" << i << ", "
+          << detail::flt(static_cast<float>(n.materialId)) << ", "
+          << detail::flt(n.pigmentId == makina::kNoPigment
+                             ? -1.0f
+                             : static_cast<float>(n.pigmentId)) << ");\n";
         stack.push_back(var);
     }
 

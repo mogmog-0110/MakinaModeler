@@ -27,6 +27,7 @@
 #include "Eval.hpp"
 
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace makina {
@@ -55,7 +56,14 @@ struct EvalNode {
     /// flat program has no parents. Taking one of the three padding words costs nothing: the
     /// struct still has to be 80 bytes to map onto the HLSL declaration.
     std::uint32_t materialId;
-    std::uint32_t _pad[2];
+    /// Which entry of EvalProgram::pigments paints this surface, or kNoPigment.
+    ///
+    /// Not the same as the material's own `textureId`. A pattern is fixed in the space of whatever
+    /// object wears it, so two solids sharing one material but standing in different places need
+    /// two entries -- the index is per node for that reason, and the table is built by the flatten
+    /// rather than copied from the scene.
+    std::uint32_t pigmentId;
+    std::uint32_t _pad;
     /// Primitive dimensions. [3] carries the distance correction, never a dimension.
     float params[4];
     /// world -> local, three rows of four.
@@ -74,11 +82,34 @@ struct FlattenReport {
     int skippedUnsupported = 0;
 };
 
+/// A pattern, and the space it is nailed to.
+///
+/// POV transforms a texture along with the object wearing it, so a checker on a wall that is moved
+/// moves its squares too. This renderer reads the pattern at the hit point, which is in world
+/// space, so the transform has to arrive with the pattern: `inv` takes a world point into the space
+/// the pattern was authored in. Without it a translated solid slides through a pattern pinned to
+/// the world -- a whole square out of step on a 0.45 checker, which reads as the wrong texture
+/// rather than as a wrong transform.
+struct GpuPigment {
+    Pigment pattern;
+    /// world -> the space of the object that wears this pattern, three rows of four.
+    float inv[12];
+};
+static_assert(sizeof(GpuPigment) == 112, "GpuPigment must match the HLSL declaration");
+
 struct EvalProgram {
     std::vector<EvalNode> nodes;   ///< RPN order
+    /// One entry per (pattern, object space) pair the scene actually uses.
+    std::vector<GpuPigment> pigments;
     int maxStackDepth = 0;
     FlattenReport report;
 };
+
+/// What EvalNode::pigmentId carries when a surface wears no pattern.
+///
+/// Any index past the end of the table would do, and the shader treats it that way, but a stated
+/// constant is what keeps the CPU and the shader from disagreeing about which one that is.
+constexpr std::uint32_t kNoPigment = 0xFFFFFFFFu;
 
 namespace detail {
 
@@ -142,10 +173,11 @@ inline Fragment foldBalanced(std::vector<Fragment> parts, EvalOp op) {
             EvalNode n{};
             n.op = static_cast<std::uint32_t>(op);
             n.params[3] = 1.0f;
-            // A boolean wears no material of its own -- the shader picks the winning operand's.
-            // Left zero it would read as "material 0", which is a real index and would look
-            // deliberate to whoever read it next.
+            // A boolean wears neither material nor pattern of its own -- the shader picks the
+            // winning operand's. Left zero they would read as "material 0" and "pigment 0", which
+            // are real indices and would look deliberate to whoever read them next.
             n.materialId = kNoMaterial;
+            n.pigmentId = kNoPigment;
             merged.push_back(n);
             next.push_back(std::move(merged));
         }
@@ -157,7 +189,31 @@ inline Fragment foldBalanced(std::vector<Fragment> parts, EvalOp op) {
 struct FlattenContext {
     const Scene*  scene;
     FlattenReport report;
+    std::vector<GpuPigment> pigments;
 };
+
+/// Interns one (pattern, object space) pair, so two solids wearing the same texture in the same
+/// place share an entry and two in different places do not.
+inline std::uint32_t internPigment(FlattenContext& ctx, const Pigment& pattern, const Mat4& space) {
+    GpuPigment g{};
+    g.pattern = pattern;
+    Mat4 inv{};
+    if (!invertAffine(space, inv)) {
+        // A collapsed space has no pattern coordinates to read. The surface keeps its flat color
+        // rather than being painted with whatever the identity would have given.
+        return kNoPigment;
+    }
+    for (int r = 0; r < 12; ++r) {
+        g.inv[r] = static_cast<float>(inv.m[r]);
+    }
+    for (std::size_t i = 0; i < ctx.pigments.size(); ++i) {
+        if (std::memcmp(&ctx.pigments[i], &g, sizeof(GpuPigment)) == 0) {
+            return static_cast<std::uint32_t>(i);
+        }
+    }
+    ctx.pigments.push_back(g);
+    return static_cast<std::uint32_t>(ctx.pigments.size() - 1);
+}
 
 /// Emits one primitive, or nothing when the shape cannot be ray marched.
 ///
@@ -187,10 +243,17 @@ inline std::uint8_t resolveMaterial(const Scene& s, const CsgNode& start) {
 }
 
 inline bool emitPrimitive(FlattenContext& ctx, const CsgNode& n, const Mat4& world,
-                          double scaleCorrection, Fragment& out) {
+                          const Mat4& textureWorld, double scaleCorrection, Fragment& out) {
     EvalNode e{};
     e.params[3] = static_cast<float>(scaleCorrection);
     e.materialId = resolveMaterial(*ctx.scene, n);
+    e.pigmentId = kNoPigment;
+    if (e.materialId < ctx.scene->materials.count) {
+        const std::int32_t t = ctx.scene->materials[e.materialId].textureId;
+        if (t >= 0 && static_cast<std::uint32_t>(t) < ctx.scene->pigments.count) {
+            e.pigmentId = internPigment(ctx, ctx.scene->pigments[t], textureWorld);
+        }
+    }
 
     double centerX = 0.0, centerY = 0.0, centerZ = 0.0;
     const float* q = n.params;
@@ -278,16 +341,17 @@ inline bool emitPrimitive(FlattenContext& ctx, const CsgNode& n, const Mat4& wor
 }
 
 Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
-                     double scaleCorrection, bool underBoolean);
+                     const Mat4& textureWorld, double scaleCorrection, bool underBoolean);
 
 /// Flattens every child and folds them together with op.
 inline Fragment flattenChildren(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
-                                double scaleCorrection, EvalOp op, bool underBoolean) {
+                                const Mat4& textureWorld, double scaleCorrection, EvalOp op,
+                                bool underBoolean) {
     const CsgNode& n = ctx.scene->nodes[index];
     std::vector<Fragment> parts;
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
         Fragment f = flattenNode(ctx, static_cast<std::uint16_t>(n.firstChild + i), world,
-                                 scaleCorrection, underBoolean);
+                                 textureWorld, scaleCorrection, underBoolean);
         if (!f.empty()) {
             parts.push_back(std::move(f));
         }
@@ -296,16 +360,28 @@ inline Fragment flattenChildren(FlattenContext& ctx, std::uint16_t index, const 
 }
 
 inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
-                            double scaleCorrection, bool underBoolean) {
+                            const Mat4& textureWorld, double scaleCorrection,
+                            bool underBoolean) {
     const CsgNode& n = ctx.scene->nodes[index];
     const Op op = static_cast<Op>(n.op);
+    // A node that names a material also fixes the space its pattern lives in, for itself and for
+    // everything under it with no material of its own.
+    //
+    // Which space that is comes from the file, not from taste. Pov.hpp pushes every enclosing
+    // transform down onto the primitives, so a `pigment` written on a boolean is followed by no
+    // transform at all and POV reads it in world space, while one written on a primitive is
+    // followed by that primitive's translate and POV carries the pattern along. The renderer has
+    // to agree with the .pov it is compared against, so it splits the same way: a pattern named
+    // on a solid moves with the solid, one named on a boolean stays put.
+    const bool carriesTexture = n.materialId < ctx.scene->materials.count;
+    const Mat4 textureHere = isPrimitive(op) ? world : identityMat();
 
     // Label falls through to the container path: it emits nothing of its own but its children are
     // geometry (Fidelity.hpp). It is still skipped as a boolean *operand*, below.
     if (isTransform(op)) {
         const Mat4 child = mulMat(world, matrixOf(n));
-        return flattenChildren(ctx, index, child, scaleCorrection * scaleFactorOf(n),
-                               EvalOp::Union, underBoolean);
+        return flattenChildren(ctx, index, child, carriesTexture ? identityMat() : textureWorld,
+                               scaleCorrection * scaleFactorOf(n), EvalOp::Union, underBoolean);
     }
 
     if (op == Op::Difference) {
@@ -316,7 +392,9 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
             if (static_cast<Op>(ctx.scene->nodes[child].op) == Op::Label) {
                 continue;
             }
-            Fragment f = flattenNode(ctx, child, world, scaleCorrection, kUnderBoolean);
+            Fragment f = flattenNode(ctx, child, world,
+                                     carriesTexture ? textureHere : textureWorld,
+                                     scaleCorrection, kUnderBoolean);
             if (f.empty()) {
                 continue;
             }
@@ -338,13 +416,14 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         d.op = static_cast<std::uint32_t>(EvalOp::Difference);
         d.params[3] = 1.0f;
         d.materialId = kNoMaterial;
+        d.pigmentId = kNoPigment;
         body.push_back(d);
         return body;
     }
 
     if (op == Op::Intersection) {
-        return flattenChildren(ctx, index, world, scaleCorrection, EvalOp::Intersection,
-                               kUnderBoolean);
+        return flattenChildren(ctx, index, world, carriesTexture ? textureHere : textureWorld,
+                               scaleCorrection, EvalOp::Intersection, kUnderBoolean);
     }
 
     // Merge, SceneRoot, Unsupported, and every primitive. A primitive with children contributes
@@ -355,7 +434,9 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
             ++ctx.report.facesUnderBoolean;
         }
         Fragment self;
-        if (emitPrimitive(ctx, n, world, scaleCorrection, self)) {
+        if (emitPrimitive(ctx, n, world, carriesTexture ? textureHere : textureWorld,
+                          scaleCorrection,
+                          self)) {
             parts.push_back(std::move(self));
         }
     } else if (op == Op::Unsupported) {
@@ -364,7 +445,8 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
 
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
         Fragment f = flattenNode(ctx, static_cast<std::uint16_t>(n.firstChild + i), world,
-                                 scaleCorrection, underBoolean);
+                                 carriesTexture ? textureHere : textureWorld, scaleCorrection,
+                                 underBoolean);
         if (!f.empty()) {
             parts.push_back(std::move(f));
         }
@@ -451,9 +533,11 @@ inline EvalProgram flatten(const Scene& s) {
         return out;
     }
 
-    detail::FlattenContext ctx{&s, {}};
-    out.nodes = detail::flattenNode(ctx, 0, detail::identityMat(), 1.0, detail::kTopLevel);
+    detail::FlattenContext ctx{&s, {}, {}};
+    out.nodes = detail::flattenNode(ctx, 0, detail::identityMat(), detail::identityMat(), 1.0,
+                                    detail::kTopLevel);
     out.report = ctx.report;
+    out.pigments = std::move(ctx.pigments);
 
     // Stack depth of the emitted sequence, which is what sizes the shader's array.
     int depth = 0;

@@ -160,9 +160,10 @@ PSOut PSMain(VSOut i) {
     // The material the solid was authored with. gBaseColor still has a job: it tints the whole
     // prop, so a game can reuse one baked shader for several coloured copies without re-baking.
     // A solid that names no material takes gBaseColor outright, which is what CsgDrawDesc means.
-    MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+    const float3 surf = evalCsgMaterial(p);
+    MkMaterial mat = mkMaterialAt(surf.y, gMaterialCount);
     // Object space, which is where the march already is -- the texture travels with the prop.
-    mat.diffuseColor = mkSurfaceColor(mat, mat.textureIndex, p) * gBaseColor;
+    mat.diffuseColor = mkSurfaceColor(mat, surf.z, p) * gBaseColor;
     mat.ambient = gAmbient;
 
     float3 col = mkAmbientTerm(mat, ao) + mkFinish(mat, nw, -gLightDir, -rdWorld, float3(1, 1, 1)) * ao;

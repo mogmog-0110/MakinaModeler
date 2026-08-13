@@ -86,16 +86,26 @@
     "name": "Scene",
     "children": [
       {
-        "op": "Box",
-        "id": 3,
-        "name": "wall",
-        "material": 0,
-        "x1": -3.0,
-        "y1": -2.2,
-        "z1": -2.6,
-        "x2": 3.0,
-        "y2": 2.2,
-        "z2": -2.2
+        "op": "Translate",
+        "id": 2,
+        "name": "backdrop",
+        "x": 0.0,
+        "y": 0.0,
+        "z": -2.4,
+        "children": [
+          {
+            "op": "Box",
+            "id": 3,
+            "name": "wall",
+            "material": 0,
+            "x1": -3.0,
+            "y1": -2.2,
+            "z1": -0.2,
+            "x2": 3.0,
+            "y2": 2.2,
+            "z2": 0.2
+          }
+        ]
       },
       {
         "op": "Translate",

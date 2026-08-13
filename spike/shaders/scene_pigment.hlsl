@@ -14,7 +14,11 @@
 #ifndef MAKINA_SCENE_PIGMENT_HLSL
 #define MAKINA_SCENE_PIGMENT_HLSL
 
-/// Must match makina::Pigment byte for byte (Scene.hpp asserts the size on the CPU side).
+/// Must match makina::GpuPigment byte for byte (Flatten.hpp asserts the size).
+///
+/// Not makina::Pigment: the table is built by the flatten, not copied from the scene, because
+/// a pattern needs the space of the object wearing it and the same pattern on two objects in
+/// different places is two entries.
 struct MkPigment {
     uint   type;
     float3 colorA;
@@ -22,6 +26,10 @@ struct MkPigment {
     float3 scale;
     float3 translate;
     float3 axis;
+    /// world -> the space the pattern was authored in, three rows of four.
+    float4 inv0;
+    float4 inv1;
+    float4 inv2;
 };
 
 StructuredBuffer<MkPigment> gPigments : register(t2);
@@ -33,12 +41,17 @@ StructuredBuffer<MkPigment> gPigments : register(t2);
 
 /// Where in the pattern a world point falls, 0..1.
 ///
-/// POV applies a pigment's transform to the *pattern*, so a `scale 2` makes the squares twice as
-/// big -- the point is divided, not multiplied. Getting this backwards produces a texture that
-/// responds to the scale in the wrong direction, which reads as a units mistake rather than as an
-/// inverted transform.
+/// Two transforms, in POV's order. First the object's: POV carries a texture along with the
+/// solid it is on, so the point is taken out of world space and into the space the pattern was
+/// authored in -- without this a wall that was moved slides through a pattern pinned to the
+/// world, and a 0.45 checker comes out a whole square off. Then the pigment's own: POV applies
+/// that one to the *pattern*, so a `scale 2` makes the squares twice as big and the point is
+/// divided rather than multiplied. Getting the second backwards reads as a units mistake
+/// rather than as an inverted transform.
 float mkPatternAt(MkPigment g, float3 wp) {
-    const float3 p = (wp - g.translate) / g.scale;
+    const float4 w = float4(wp, 1.0);
+    const float3 op = float3(dot(g.inv0, w), dot(g.inv1, w), dot(g.inv2, w));
+    const float3 p = (op - g.translate) / g.scale;
 
     if (g.type == MK_PIGMENT_CHECKER) {
         // POV's checker is the parity of the three floors, and it is a hard edge: there is no
@@ -72,12 +85,15 @@ float3 mkPigmentColorAt(MkPigment g, float3 wp) {
     return lerp(g.colorA, g.colorB, saturate(mkPatternAt(g, wp)));
 }
 
-/// The pigment a material names, or its flat color when it names none.
+/// The pigment this surface wears, or the material's flat color when it wears none.
+///
+/// The index comes from the surface rather than from the material, because it selects a
+/// (pattern, object space) pair and the material only knows the pattern.
 ///
 /// An index past the end falls back rather than clamping, for the reason mkMaterialAt does: a
 /// clamp would paint the surface with pigment 0 and look like an authoring choice.
-float3 mkSurfaceColor(MkMaterial m, float textureIndex, float3 wp) {
-    const int i = (int)textureIndex;
+float3 mkSurfaceColor(MkMaterial m, float pigmentIndex, float3 wp) {
+    const int i = (int)pigmentIndex;
     if (i < 0 || (uint)i >= gPigmentCount) {
         return m.diffuseColor;
     }
