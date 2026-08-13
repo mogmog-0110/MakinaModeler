@@ -402,9 +402,15 @@ int main(int argc, char** argv) {
         D3D12_GPU_VIRTUAL_ADDRESS        lightAddress = 0;
         std::uint32_t                    lightCount = 0;
 
+        // The tree that gets drawn. Edit.hpp honours the mute flag in exactly one place, and
+        // this is where that place is called: everything downstream sees an ordinary scene.
+        const auto visible = [](const makina::Scene& s) {
+            return makina::hasMuted(s) ? makina::withoutMuted(s) : s;
+        };
+
         auto rebuild = [&]() {
-            prog = makina::flatten(history.current());
-            bounds = makina::worldBounds(history.current());
+            prog = makina::flatten(visible(history.current()));
+            bounds = makina::worldBounds(visible(history.current()));
 
             // Rebuilt with the tree because an edit can add or change a material. A scene with
             // none still gets one entry: the shader declares t1, and a root SRV that is declared
@@ -749,7 +755,7 @@ int main(int argc, char** argv) {
                         transform.value());
                     if (p.ok) {
                         previewScene = p.scene;
-                        previewProg = makina::flatten(previewScene);
+                        previewProg = makina::flatten(visible(previewScene));
                         previewing = !previewProg.nodes.empty();
                     } else {
                         // A transform with no axis yet is refused, and that is not an error to
@@ -848,6 +854,51 @@ int main(int argc, char** argv) {
                         selection = copies;
                         std::printf("duplicated %zu node(s)\n", copies.size());
                     }
+                    rebuild();
+                    continue;
+                }
+                if (action == "edit.toggleMute") {
+                    // Muted, not hidden. There is nothing to hide behind in a CSG tree: mute the
+                    // cutter of a difference and the hole fills in, because the shape is the
+                    // picture. Op.hpp says so where the flag is declared.
+                    if (selection.empty()) {
+                        // With nothing selected this brings everything back. There is no outliner
+                        // yet, so a muted node cannot be clicked -- it is not drawn -- and a mute
+                        // with no way back would be a delete wearing a friendlier name.
+                        makina::Scene all = history.current();
+                        int freed = 0;
+                        for (std::uint32_t i = 0; i < all.nodes.count; ++i) {
+                            if ((all.nodes[i].flags & makina::flags::kMuted) != 0) {
+                                all.nodes[i].flags &= static_cast<std::uint16_t>(
+                                    ~makina::flags::kMuted);
+                                ++freed;
+                            }
+                        }
+                        if (freed == 0) {
+                            std::printf("nothing selected, and nothing is muted\n");
+                            continue;
+                        }
+                        history.commit(all, "unmute everything");
+                        std::printf("%d node(s) back in the solid\n", freed);
+                        rebuild();
+                        continue;
+                    }
+                    const makina::Selection targets =
+                        makina::topLevel(history.current(), selection);
+                    makina::Scene next = history.current();
+                    int muted = 0;
+                    for (const std::uint32_t id : targets) {
+                        const std::uint16_t index = makina::indexOfId(next, id);
+                        if (index == makina::kNoChild || index == 0) {
+                            continue;
+                        }
+                        next.nodes[index].flags ^= makina::flags::kMuted;
+                        if ((next.nodes[index].flags & makina::flags::kMuted) != 0) {
+                            ++muted;
+                        }
+                    }
+                    history.commit(next, "mute " + std::to_string(targets.size()) + " node(s)");
+                    std::printf("%d of %zu node(s) now out of the solid\n", muted, targets.size());
                     rebuild();
                     continue;
                 }

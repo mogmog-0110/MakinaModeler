@@ -80,7 +80,7 @@ inline const std::vector<std::string>& knownActions() {
         "select.pick",     "select.add",       "select.descend",  "select.clear",
         "select.box",
         "edit.move",       "edit.rotate",      "edit.scale",
-        "edit.duplicate",  "edit.delete",
+        "edit.duplicate",  "edit.delete",      "edit.toggleMute",
         "edit.undo",       "edit.redo",
         "axis.x",          "axis.y",           "axis.z",
         "snap.hold",
@@ -288,6 +288,7 @@ inline const char* mayaKeymapJson() {
     { "action": "select.add",     "button": "left", "drag": false, "modifiers": ["shift"] },
     { "action": "select.box",     "button": "left", "drag": true },
     { "action": "select.descend", "button": "left", "drag": false, "modifiers": ["ctrl"] },
+    { "action": "select.clear",   "key": "A", "modifiers": ["alt"] },
 
     { "action": "view.fitSelected", "key": "F" },
     { "action": "view.fitAll",      "key": "A" },
@@ -298,6 +299,7 @@ inline const char* mayaKeymapJson() {
 
     { "action": "edit.duplicate", "key": "D", "modifiers": ["ctrl"] },
     { "action": "edit.delete",    "key": "DELETE" },
+    { "action": "edit.toggleMute", "key": "H" },
     { "action": "edit.undo",      "key": "Z", "modifiers": ["ctrl"] },
     { "action": "edit.redo",      "key": "Y", "modifiers": ["ctrl"] },
 
@@ -323,6 +325,7 @@ inline const char* blenderKeymapJson() {
     { "action": "select.add",     "button": "left", "drag": false, "modifiers": ["shift"] },
     { "action": "select.box",     "button": "left", "drag": true },
     { "action": "select.descend", "button": "left", "drag": false, "modifiers": ["alt"] },
+    { "action": "select.clear",   "key": "A", "modifiers": ["alt"] },
 
     { "action": "view.fitSelected", "key": "NUMPADPERIOD" },
     { "action": "view.fitAll",      "key": "HOME" },
@@ -340,6 +343,7 @@ inline const char* blenderKeymapJson() {
 
     { "action": "edit.duplicate", "key": "D", "modifiers": ["shift"] },
     { "action": "edit.delete",    "key": "X" },
+    { "action": "edit.toggleMute", "key": "H" },
     { "action": "edit.undo",      "key": "Z", "modifiers": ["ctrl"] },
     { "action": "edit.redo",      "key": "Z", "modifiers": ["ctrl", "shift"] },
 

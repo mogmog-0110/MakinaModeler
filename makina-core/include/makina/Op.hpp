@@ -64,6 +64,15 @@ constexpr std::uint16_t kAxisZ    = 2;
 // Cone "Open ": an open cone has no end caps.
 constexpr std::uint16_t kConeOpen = 0x0004;
 
+// Muted: this node and everything under it take no part in the solid.
+//
+// Not "hidden". In a CSG tree there is no such thing as leaving a node out of the picture but
+// in the shape: the shape *is* the picture. Mute the cutter of a difference and the hole fills
+// in -- that is the operation, and calling it hiding would describe something this model
+// cannot do. Edit.hpp's withoutMuted is the one place it is honoured, by handing every
+// consumer a tree the muted subtrees have already left.
+constexpr std::uint16_t kMuted    = 0x0008;
+
 }  // namespace flags
 
 // ---------------------------------------------------------------- op names

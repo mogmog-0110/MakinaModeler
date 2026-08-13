@@ -21,6 +21,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -85,20 +86,46 @@ int main(int argc, char** argv) {
         }
     }
 
-    // The other direction: a preset that binds something the build does not know. Keymap::load
-    // already refuses that, so this only guards the built-in presets, which never go through a
-    // file and so never meet that check.
+    // The other direction, twice over.
+    //
+    // A preset that binds something the build does not know is refused by Keymap::load, so that
+    // one only needs the built-in presets run through it -- they never come from a file and so
+    // never meet that check.
+    //
+    // And an action nothing can reach is as dead as an action nothing implements. select.clear
+    // was exactly that for a while: in the list, handled by the viewport, and bound to nothing in
+    // either preset, so there was no way to press it. Checking one direction only is what let it
+    // sit there.
+    //
+    // At least one preset, not both. The two are meant to differ -- Maya has no key for the axis
+    // views or the orthographic toggle and PLAN.md's own table marks that column with a dash, so
+    // demanding both would be demanding that this project invent bindings Maya users do not have.
+    std::vector<makina::Keymap> presets;
     for (const char* json : {makina::mayaKeymapJson(), makina::blenderKeymapJson()}) {
         makina::Keymap map;
         std::string error;
         if (!map.load(json, error)) {
             std::printf("    FAIL  a built-in keymap does not load: %s\n", error.c_str());
             ++missing;
+            continue;
+        }
+        presets.push_back(std::move(map));
+    }
+    for (const std::string& action : makina::knownActions()) {
+        bool reachable = false;
+        for (const makina::Keymap& map : presets) {
+            if (!map.bindingsFor(action).empty()) {
+                reachable = true;
+            }
+        }
+        if (!reachable) {
+            std::printf("    FAIL  no preset binds anything to '%s'\n", action.c_str());
+            ++missing;
         }
     }
 
     if (missing != 0) {
-        std::printf("\n%d action(s) promised and not carried out\n", missing);
+        std::printf("\n%d action(s) promised and not reachable\n", missing);
         return 1;
     }
     std::printf("    %zu actions, every one of them reaches the viewport\n",

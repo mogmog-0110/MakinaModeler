@@ -5,6 +5,7 @@
 // difference between moving a bracket and moving it twice as far, and nothing about the picture
 // says which happened.
 
+#include <makina/Eval.hpp>
 #include <makina/Selection.hpp>
 #include <makina/SceneJson.hpp>
 
@@ -95,6 +96,63 @@ int main() {
     check(makina::topLevel(s, makina::Selection{3, 99}) == makina::Selection{3},
           "an id that has left the tree is dropped");
     check(makina::topLevel(s, makina::Selection{}).empty(), "an empty selection stays empty");
+
+    // ---------------------------------------------------------------- mute
+    //
+    // Muting is not hiding. There is no leaving a node out of the picture but in the shape when
+    // the shape is the picture, so muting the cutter of a difference fills the hole in -- and that
+    // is checked here, because it is the behaviour someone expecting "hide" would be surprised by.
+    {
+        const char* json = R"({
+          "format": "makina-scene", "version": 1, "nextId": 5,
+          "root": { "op": "SceneRoot", "id": 1, "name": "Scene", "children": [
+            { "op": "Difference", "id": 2, "name": "plate", "children": [
+              { "op": "Box", "id": 3, "name": "body",
+                "x1": -1, "y1": -1, "z1": -1, "x2": 1, "y2": 1, "z2": 1 },
+              { "op": "Sphere", "id": 4, "name": "bore", "radius": 0.5 }
+            ] } ] }
+        })";
+        const makina::Scene plain = makina::parseScene(json);
+        check(!makina::hasMuted(plain), "a scene with no flag set reads as unmuted");
+
+        const double centre[3] = {0.0, 0.0, 0.0};
+        check(makina::eval(plain, centre) > 0.0, "the bore should leave the centre outside");
+
+        // The flag survives a save and a load, and only appears when it is set.
+        makina::Scene muted = plain;
+        const std::uint16_t bore = makina::indexOfId(muted, 4);
+        check(bore != makina::kNoChild, "the bore is in the tree");
+        muted.nodes[bore].flags |= makina::flags::kMuted;
+        check(makina::hasMuted(muted), "the flag reads back");
+
+        const std::string text = makina::writeScene(muted);
+        check(text.find("\"muted\"") != std::string::npos, "muted is written to the file");
+        check(makina::writeScene(plain).find("\"muted\"") == std::string::npos,
+              "a scene with nothing muted gains no muted key");
+        const makina::Scene reloaded = makina::parseScene(text);
+        check(makina::hasMuted(reloaded), "the flag survives the round trip");
+
+        // And the solid changes, which is the honest part.
+        const makina::Scene visible = makina::withoutMuted(muted);
+        check(!makina::hasMuted(visible), "the tree handed on carries no flag");
+        check(makina::indexOfId(visible, 4) == makina::kNoChild, "the muted node is gone");
+        check(makina::indexOfId(visible, 3) != makina::kNoChild, "its sibling stayed");
+        check(makina::eval(visible, centre) < 0.0,
+              "muting the cutter must fill the hole -- this is an edit, not a view toggle");
+
+        // Muting the parent takes the children with it.
+        makina::Scene wholeThing = plain;
+        wholeThing.nodes[makina::indexOfId(wholeThing, 2)].flags |= makina::flags::kMuted;
+        const makina::Scene empty = makina::withoutMuted(wholeThing);
+        check(empty.nodes.count == 1, "muting a group leaves nothing under the root");
+        check(makina::eval(empty, centre) >= makina::kEmpty,
+              "an empty scene has no surface anywhere");
+
+        // Nothing muted, nothing changed. A rebuild that quietly reordered the tree would make
+        // every check above pass and still break a scene the moment it was saved.
+        check(makina::writeScene(makina::withoutMuted(plain)) == makina::writeScene(plain),
+              "a scene with nothing muted comes back byte for byte");
+    }
 
     if (failures == 0) {
         std::printf("\nan edit reaches each selected solid exactly once (%d checks)\n", checks);

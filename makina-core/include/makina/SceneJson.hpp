@@ -91,6 +91,11 @@ inline void fillNode(Scene& s, std::uint16_t index, const nlohmann::json& j) {
             n.flags |= flags::kConeOpen;
         }
     }
+    if (j.value("muted", false)) {
+        // Read for every op, not just the ones with their own flags: any node can be taken out of
+        // the solid, and a Translate carrying a subtree is the most useful one to take out.
+        n.flags |= flags::kMuted;
+    }
 
     n.firstChild = kNoChild;
     n.childCount = 0;
@@ -292,6 +297,11 @@ inline nlohmann::ordered_json writeNode(const Scene& s, std::uint16_t index) {
         if (op == Op::Cone) {
             j["open"] = (n.flags & flags::kConeOpen) != 0;
         }
+    }
+    if ((n.flags & flags::kMuted) != 0) {
+        // Written only when set, so every scene that has ever been saved still reads back byte for
+        // byte -- the same rule reflection and ior follow.
+        j["muted"] = true;
     }
 
     if (n.childCount > 0) {

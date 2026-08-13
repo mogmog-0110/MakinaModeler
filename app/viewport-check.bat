@@ -70,6 +70,13 @@ call :run multidel  "13,60" "DELETE"
 call :run multicopy "13,60" "CTRL+D"
 call :run nested    "13,14" "DELETE"
 
+REM Muting. Not hiding: the node leaves the solid, which is why the saved tree keeps it and
+REM the flag rather than losing it the way a delete does. H with nothing selected brings
+REM everything back, which is the only way home while there is no outliner to click a node
+REM that is no longer drawn.
+call :run mute   13 "H"
+call :run unmute 13 "H ALT+A H"
+
 call :differs move   "a committed move must change the tree"
 call :same    cancel "Escape must leave the tree untouched"
 call :same    undo   "undo must restore the tree exactly"
@@ -89,6 +96,12 @@ call :differs multimove "moving two nodes at once must change the tree"
 call :absent  multidel  13 "deleting two must remove the first"
 call :absent  multidel  60 "deleting two must remove the second"
 call :differs multicopy "duplicating two must add two subtrees"
+
+call :differs mute   "muting must change the saved tree"
+call :matches mute   "muted.: true" "the muted node must carry the flag"
+REM Still in the tree, unlike a delete. That is the whole difference between the two.
+call :present mute   13 "a muted node must stay in the tree"
+call :same    unmute "muting and then unmuting must land back on the original tree"
 REM The rule, checked where it is visible: 4 contains 13, so asking to delete both must be the
 REM same edit as deleting 4 alone. Without it the second delete refuses -- the first already
 REM took the node -- and the whole gesture is abandoned, leaving the tree untouched.
@@ -203,6 +216,19 @@ exit /b 0
 
 REM No node in the saved tree carries this id any more. The comma is part of the pattern because
 REM "id": 13 would otherwise also match "id": 130.
+:present
+if not exist "%OUT%\%~1.json" (
+    echo       FAILED [%~1]: nothing was saved
+    set FAILED=1
+    exit /b 0
+)
+findstr /R /C:"id.: %~2," "%OUT%\%~1.json" >nul 2>&1
+if errorlevel 1 (
+    echo       FAILED [%~1]: %~3
+    set FAILED=1
+)
+exit /b 0
+
 :absent
 if not exist "%OUT%\%~1.json" (
     echo       FAILED [%~1]: nothing was saved

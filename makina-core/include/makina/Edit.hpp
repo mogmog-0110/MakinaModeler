@@ -279,6 +279,62 @@ inline EditResult removeSubtree(const Scene& s, std::uint32_t id) {
     return detail::rebuild(s, plan);
 }
 
+/// Whether anything in the tree is muted.
+[[nodiscard]] inline bool hasMuted(const Scene& s) {
+    for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
+        if ((s.nodes[i].flags & flags::kMuted) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The scene with every muted subtree taken out.
+///
+/// **The only place the mute flag is honoured**, and that is the whole design. Eight headers walk
+/// this tree -- the field, the bounds, the BSP, the tessellation, the measurement, the POV export,
+/// the flatten, the picker -- and a flag each of them had to remember to check is a flag one of
+/// them eventually forgets. Then the picture and the exported file disagree about what the solid
+/// is, and nothing crashes.
+///
+/// So nothing else checks it. Whoever is about to evaluate, draw, export or measure asks for the
+/// tree without the muted parts and gets an ordinary scene, consistent by construction.
+///
+/// Ids are untouched, so a selection made against the authored tree still names the same nodes
+/// here -- which is what lets the viewport pick against the visible tree and edit the authored one.
+[[nodiscard]] inline Scene withoutMuted(const Scene& s) {
+    Scene out = s;
+    // One at a time, because each removal renumbers the array and an index taken before it would
+    // point at a different node afterwards. Outermost first: removing a muted parent takes its
+    // muted children with it, so the loop settles quickly.
+    for (std::size_t guard = 0; guard < Scene::kMaxNodes; ++guard) {
+        std::uint16_t found = kNoChild;
+        for (std::uint32_t i = 1; i < out.nodes.count; ++i) {
+            if ((out.nodes[i].flags & flags::kMuted) != 0) {
+                found = static_cast<std::uint16_t>(i);
+                break;
+            }
+        }
+        if (found == kNoChild) {
+            break;
+        }
+        detail::RebuildPlan plan;
+        plan.skip = found;
+        const EditResult r = detail::rebuild(out, plan);
+        if (!r.ok) {
+            // The root carrying the flag is the only way this refuses, and a muted root is an
+            // empty scene rather than an error: the user asked for nothing to be in the solid.
+            Scene empty = s;
+            empty.nodes.count = 1;
+            empty.nodes[0].firstChild = kNoChild;
+            empty.nodes[0].childCount = 0;
+            return empty;
+        }
+        out = r.scene;
+    }
+    return out;
+}
+
 namespace detail {
 
 /// Gives every node in the subtree at `index` a fresh id, in pre-order.
