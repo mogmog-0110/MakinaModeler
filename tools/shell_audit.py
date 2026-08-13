@@ -25,6 +25,14 @@ mitiru_bind.js を読んで取り出すので、エンジンが増やせばこ�
   G  束縛器の二つの script が読まれていること
   H  <img src> のファイルが実在すること
   I  data-m-input の送信名が送信時に読まれること     (下の「順序への依存」)
+  J  読んでいる鍵を C++ が publish すること         (ViewState.hpp と突き合わせ)
+
+J が BINDING.md の言う「静的な照合」の当のものである。属性の綴りが正しく、repeat の
+書き方も正しくても、C++ が push しない名前は同じように黙って何も起こさない。ViewState.hpp
+の publishedKeys() / publishedItemFields() が語彙で、あちらは viewstate_check.cpp が
+「宣言どおりのものを本当に出しているか」を見ているので、宣言が願望になることはない。
+
+12 項目すべて、tools/shell_audit_control.py が傷を入れて落ちることを毎回確かめている。
 
 順序への依存について。プロパティ欄は行ごとに違うパラメータを編集するが、data-m-input が
 送るのは値だけで、どの欄かを運ばない。そこで data-m-attr で行ごとに data-m-input を
@@ -41,6 +49,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SHELL = os.path.join(ROOT, 'app', 'ui', 'shell.html')
 KEYMAP = os.path.join(ROOT, 'makina-core', 'include', 'makina', 'Keymap.hpp')
+VIEWSTATE = os.path.join(ROOT, 'makina-core', 'include', 'makina', 'ViewState.hpp')
 MITIRU = os.environ.get('MITIRU_DIR', 'D:/sandbox/MitiruEngineDev')
 BINDER = os.path.join(MITIRU, 'web', 'mitiru_runtime', 'mitiru_bind.js')
 
@@ -75,26 +84,76 @@ def known_actions(hpp):
 
 
 def repeat_blocks(html):
-    """data-m-repeat の要素と、その中身 (対応する閉じタグまでを素朴に数えて切り出す)。"""
+    """data-m-repeat の (リスト名, 開始, 終了)。終端は対応する閉じタグを素朴に数えて求める。"""
     out = []
-    for m in re.finditer(r'<(\w+)([^>]*\bdata-m-repeat=)', html):
+    for m in re.finditer(r'<(\w+)([^>]*\bdata-m-repeat="([^"]*)")', html):
         tag = m.group(1)
-        depth, i = 0, m.start()
+        depth, end = 0, len(html)
         for t in re.finditer(r'<(/?)%s\b' % tag, html[m.start():]):
             depth += -1 if t.group(1) else 1
             if depth == 0:
-                i = m.start() + t.end()
+                end = m.start() + t.end()
                 break
-        out.append(html[m.start():i])
+        out.append((m.group(3), m.start(), end))
     return out
+
+
+# 値として path を取る属性。data-m-input は送信名であって状態の path ではないので入らない。
+# attr / style / tpl は文字列の中に {path} を書くので、取り出し方が違う。
+PLAIN_PATH = 'text|show|hide|tween|flash|toast|value|repeat'
+BRACED_PATH = 'attr|style|tpl'
+
+
+def bound_paths(html, start, end):
+    """[start, end) の範囲で束縛されている state path を (属性, path) で返す。"""
+    chunk = html[start:end]
+    for attr, value in re.findall(r'\b(data-m-(?:%s))="([^"]*)"' % PLAIN_PATH, chunk):
+        for one in ([value] if attr != 'data-m-class' else []):
+            token = one.strip().lstrip('!')
+            token = re.split(r'[<>=!\s]', token)[0]
+            if token and not token[0].isdigit():
+                yield attr, token
+    for spec in re.findall(r'\bdata-m-class="([^"]*)"', chunk):
+        for pair in spec.split(';'):
+            if ':' in pair:
+                token = pair.split(':', 1)[1].strip().lstrip('!')
+                token = re.split(r'[<>=!\s]', token)[0]
+                if token and not token[0].isdigit():
+                    yield 'data-m-class', token
+    for attr, value in re.findall(r'\b(data-m-(?:%s))="([^"]*)"' % BRACED_PATH, chunk):
+        for token in re.findall(r'\{([^}:]+)', value):
+            yield attr, token.strip()
+    for value in re.findall(r'\bdata-m-arg="([^"]*)"', chunk):
+        token = value.strip()
+        if token and token[0] not in '\'"' and not token[0].isdigit():
+            yield 'data-m-arg', token
+
+
+def published(hpp):
+    """ViewState.hpp が publish すると宣言している鍵と、リスト項目のフィールド。"""
+    keys = set()
+    m = re.search(r'publishedKeys\(\)\s*\{(.*?)\n\}', hpp, re.S)
+    if m:
+        keys = set(re.findall(r'"([\w.]+)"', m.group(1)))
+    fields = {}
+    m = re.search(r'publishedItemFields\(\)\s*\{(.*?)\n\}', hpp, re.S)
+    if m:
+        for entry in re.finditer(r'\{"([\w.]+)",\s*\{([^}]*)\}\}', m.group(1)):
+            fields[entry.group(1)] = set(re.findall(r'"(\w+)"', entry.group(2)))
+    return keys, fields
 
 
 def main():
     bad = 0
-    for path in (SHELL, KEYMAP):
+    # 引数で別の HTML を見られるのは、否定対照のためである。傷を入れた写しを渡せるので、
+    # 本物の shell.html を書き換えてから戻す必要がなくなる -- 途中で落ちたときに壊れた
+    # シェルが残る対照は、確かめている当のものより危ない。
+    # アイコンの実在だけは本物の置き場を基準に見る (写しはどこに置かれてもよい)。
+    shell = sys.argv[1] if len(sys.argv) > 1 else SHELL
+    for path in (shell, KEYMAP, VIEWSTATE):
         if not os.path.exists(path):
             return fail("could not open '%s'" % os.path.basename(path))
-    html = open(SHELL, encoding='utf-8').read()
+    html = open(shell, encoding='utf-8').read()
 
     # A -- 束縛器が読む属性かどうか。エンジンが無ければ飛ばすが、黙っては飛ばさない。
     if os.path.exists(BINDER):
@@ -112,18 +171,41 @@ def main():
     else:
         print('    SKIP  binder not found under MITIRU_DIR -- attribute set unchecked')
 
-    # B / C / D -- repeat の中。
-    for block in repeat_blocks(html):
-        listpath = re.search(r'data-m-repeat="([^"]*)"', block).group(1)
-        if '<template' not in block:
+    # B / C / D / J -- repeat の中と外。
+    keys, itemFields = published(open(VIEWSTATE, encoding='utf-8').read())
+    if not keys:
+        bad += fail('could not read publishedKeys() out of ViewState.hpp')
+
+    spans = repeat_blocks(html)
+    for listpath, start, end in spans:
+        if '<template' not in html[start:end]:
             bad += fail("repeat '%s' has no <template>; it will not expand" % listpath)
-        for attr, value in re.findall(r'\b(data-m-(?:text|arg|value|class|show|hide))="([^"]*)"',
-                                      block):
-            for path in re.findall(r'[A-Za-z_][\w.]*', value.split(':')[-1]):
-                if path.startswith(('item.', 'view.')):
-                    bad += fail("'%s=\"%s\"' inside repeat '%s': fields are bare here, so this "
-                                'resolves against the item and finds nothing' % (attr, value,
-                                                                                listpath))
+        if listpath not in itemFields:
+            bad += fail("repeat '%s' has no entry in publishedItemFields()" % listpath)
+        if listpath not in keys:
+            bad += fail("repeat '%s' names a list ViewState.hpp does not publish" % listpath)
+        for attr, path in bound_paths(html, start, end):
+            # 自分自身のリスト名は項目のフィールドではなく、外側の鍵である。
+            if attr == 'data-m-repeat':
+                continue
+            if path.startswith(('item.', 'view.')):
+                bad += fail("'%s' inside repeat '%s': fields are bare here, so this resolves "
+                            'against the item and finds nothing' % (path, listpath))
+            elif path not in itemFields.get(listpath, set()):
+                bad += fail("repeat '%s' binds '%s', which its items do not carry" %
+                            (listpath, path))
+
+    # J -- repeat の外。C++ が push しない鍵は、束縛器が黙って捨てる。BINDING.md が
+    # `mitiru lint` でやると書いて実装されていない照合が、これである。
+    inside = lambda i: any(a <= i < b for _, a, b in spans)
+    for m in re.finditer(r'\b(data-m-(?:%s|%s|arg|class))="' % (PLAIN_PATH, BRACED_PATH), html):
+        if inside(m.start()):
+            continue
+        for attr, path in bound_paths(html, m.start(), html.index('"', m.end()) + 1):
+            if path not in keys:
+                bad += fail("the shell reads '%s', which ViewState.hpp does not publish" % path)
+    print('    %d published keys, and the shell reads none the C++ side withholds' % len(keys))
+
     for attr, value in re.findall(r'\b(data-m-(?:attr|style|tpl))="([^"]*)"', html):
         if '{' not in value:
             bad += fail("'%s=\"%s\"' has no {path}; the literal text is written as-is" %

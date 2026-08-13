@@ -7,6 +7,7 @@ setlocal
 set VS_ROOT=C:\Program Files\Microsoft Visual Studio\18\Community
 set VCVARS=%VS_ROOT%\VC\Auxiliary\Build\vcvarsall.bat
 set CMAKE=%VS_ROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+set CTEST=%VS_ROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe
 set NINJA=%VS_ROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe
 
 if not exist "%VCVARS%" (
@@ -124,6 +125,24 @@ echo.
 if errorlevel 1 (
     echo.
     echo ERROR: the command layer misbehaved
+    exit /b 1
+)
+
+REM Everything else CMakeLists.txt registers.
+REM
+REM The checks above are named one by one because they take the Java dumps as arguments and ctest
+REM cannot know where those are. Everything that needs no arguments is registered with add_test --
+REM and for a long time nothing ran ctest, so eight of them never ran at all: camera, pick, keymap,
+REM transform, selection, material, mesh_compare and pov_import_check. They passed when finally
+REM run, so nothing was broken; what was wrong is that "everything agrees" was covering half of
+REM what it appeared to. A check nobody invokes is a check that does not exist, and the only reason
+REM to notice is to count.
+echo.
+echo ctest: everything CMakeLists.txt registers
+"%CTEST%" --test-dir "%BUILD_DIR%" --output-on-failure --no-tests=error
+if errorlevel 1 (
+    echo.
+    echo ERROR: a registered test failed
     exit /b 1
 )
 endlocal

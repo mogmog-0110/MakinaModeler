@@ -13,4 +13,10 @@ REM either. What it checks and why is at the top of that file.
 setlocal
 set HERE=%~dp0
 python "%HERE%..\tools\shell_audit.py"
+if errorlevel 1 exit /b 1
+
+REM And the checks above, checked. Each one runs against a copy of the shell with a single wound
+REM in it and has to fail. Three times in this project a check has passed while catching nothing,
+REM so the controls run every time rather than once on the day they were written.
+python "%HERE%..\tools\shell_audit_control.py"
 exit /b %errorlevel%

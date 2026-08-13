@@ -64,6 +64,11 @@ target_link_libraries(material_check PRIVATE makina_core)
 add_executable(pov_import_check tests/pov_import_check.cpp)
 target_link_libraries(pov_import_check PRIVATE makina_core)
 
+# What the shell is allowed to see. Headless, because it is a function of the tree and nothing
+# else -- the window is not what makes it right.
+add_executable(viewstate_check tests/viewstate_check.cpp)
+target_link_libraries(viewstate_check PRIVATE makina_core)
+
 # The fourth agreement: the mesh that leaves the project, against the field that stays in it.
 add_executable(mesh_compare tests/mesh_compare.cpp)
 target_link_libraries(mesh_compare PRIVATE makina_core)
@@ -110,6 +115,7 @@ if(FIXTURE_SCENES)
     add_test(NAME pick_check COMMAND pick_check)
     add_test(NAME keymap_check COMMAND keymap_check)
     add_test(NAME transform_check COMMAND transform_check)
+    add_test(NAME viewstate_check COMMAND viewstate_check)
     add_test(NAME selection_check COMMAND selection_check ${FIXTURE_SCENES})
     add_test(NAME material_check COMMAND material_check ${FIXTURE_SCENES})
     add_test(NAME mesh_compare COMMAND mesh_compare ${FIXTURE_SCENES})
