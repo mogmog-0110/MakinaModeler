@@ -267,7 +267,21 @@ float4 PSMain(VSOut i) : SV_Target {
         // way. `alpha` is stored as opacity and the exported file inverts it, so the filter is
         // what is left over.
         const float filt = saturate(1.0 - mat.alpha);
-        col += through * here * (1.0 - filt);
+
+        // The surface's own share, weighted in gamma rather than in linear light.
+        //
+        // Not a fudge factor -- a hypothesis that was tested. Weighting by (1 - filter) in linear
+        // put every glass pixel at a flat 0.70 of POV's, which in linear light is exactly half.
+        // Solving for the weight POV must be using gave 0.5 where (1 - filter) is 0.25, and
+        // 0.25^(1/2.2) = 0.53: POV blends a filtered surface in gamma space. Applying that
+        // exponent moved the mean difference from 27.4 to 9.5 and three sampled points to within
+        // 5%, with the opaque block behind the glass exact to the level.
+        //
+        // Still an approximation of the mechanism rather than the mechanism. A gamma-space blend
+        // is not separable into a per-layer weight, so closing the rest means compositing the
+        // layers in gamma and shading in linear -- which is why a filtered scene is still left
+        // out of the gated comparison (render_scene.cpp says so where it skips one).
+        col += through * here * pow(max(1.0 - filt, 1e-6), 1.0 / 2.2);
         if (filt <= 0.0) {
             break;
         }

@@ -444,18 +444,14 @@ int main(int argc, char** argv) {
                 }
 
                 if (povMatch && hasTransparentMaterial(scene)) {
-                    // The renderer does trace through a filtered surface now, and the picture is
-                    // right in kind: the glass is green, the block behind shows through it, and
-                    // the wedge where they overlap is in the same place as POV's.
-                    //
-                    // What does not match is brightness. Ours comes out at a uniform 0.70 of POV
-                    // across all three channels at every point measured -- flat, so the hue is
-                    // right and something scales the whole result. POV's own compositing for
-                    // filter is what would settle it, and guessing at a factor until the number
-                    // passed would be fitting a constant to one scene rather than matching an
-                    // implementation.
-                    std::printf("    no .pov: this renderer traces through a filtered surface "
-                                "but does not yet match POV's brightness (a flat 0.70)\n");
+                    // Brightness is close and not equal. The flat 0.70 this used to be turned
+                    // out to be POV blending a filtered surface in gamma rather than in linear
+                    // light, and weighting by that exponent took the mean from 27.4 to 9.5. A
+                    // gamma-space blend is not separable into a per-layer weight, though, so
+                    // closing the rest needs the layers composited in gamma while the shading
+                    // stays linear.
+                    std::printf("    no .pov: a filtered surface is within 9.5 of POV rather "
+                                "than the 6 this comparison holds to\n");
                 } else if (writePov && hasUnboundedPrimitive(scene)) {
                     // POV-Ray has no far plane; the march does. An infinite Plane therefore fills
                     // POV's frame and stops at a circle in ours, and the comparison measures the
