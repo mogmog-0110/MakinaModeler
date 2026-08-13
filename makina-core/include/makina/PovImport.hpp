@@ -73,6 +73,12 @@ struct PovNode {
     std::vector<PovNode> children;
 };
 
+/// One entry of a `transform { ... }`: what to do and by how much.
+struct PovMove {
+    std::string kind;   ///< translate | rotate | scale
+    double      v[3]{};
+};
+
 /// One parse in progress: the token stream, the symbol tables, and the tree being built.
 class PovReader {
 public:
@@ -191,9 +197,78 @@ private:
         refuse("expected a number but found '" + peek().text + "'");
     }
 
-    /// `<x,y,z>`, a declared vector, one of POV's built-in axis names, or one number for all
-    /// three.
+    /// A vector expression: `<x,y,z>`, an axis name, a declared vector, a number, or arithmetic
+    /// over them.
+    ///
+    /// Everything is held as three components, a scalar included -- POV broadcasts one, which is
+    /// what `scale 2` relies on, and it multiplies two vectors component by component. Carrying a
+    /// separate scalar type would mean writing every operator twice for no gain.
+    ///
+    /// This exists because hand-written files say `rotate x*20` and `plane{-y, 0}`, both of which
+    /// are arithmetic on a vector rather than a literal.
     void vector3(double out[3]) {
+        vecTerm(out);
+        while (isPunct('+') || isPunct('-')) {
+            const char op = take().text[0];
+            double rhs[3];
+            vecTerm(rhs);
+            for (int i = 0; i < 3; ++i) {
+                out[i] = op == '+' ? out[i] + rhs[i] : out[i] - rhs[i];
+            }
+        }
+    }
+
+    void vecTerm(double out[3]) {
+        vecFactor(out);
+        while (isPunct('*') || isPunct('/')) {
+            const char op = take().text[0];
+            double rhs[3];
+            vecFactor(rhs);
+            for (int i = 0; i < 3; ++i) {
+                if (op == '/' && rhs[i] == 0.0) {
+                    refuse("division by zero in a vector expression");
+                }
+                out[i] = op == '*' ? out[i] * rhs[i] : out[i] / rhs[i];
+            }
+        }
+    }
+
+    void vecFactor(double out[3]) {
+        if (isPunct('-')) {
+            take();
+            vecFactor(out);
+            for (int i = 0; i < 3; ++i) {
+                out[i] = -out[i];
+            }
+            return;
+        }
+        if (isPunct('+')) {
+            take();
+            vecFactor(out);
+            return;
+        }
+        if (isPunct('(')) {
+            take();
+            vector3(out);
+            expectPunct(')');
+            return;
+        }
+        if (isPunct('<')) {
+            take();
+            out[0] = number();
+            expectPunct(',');
+            out[1] = number();
+            expectPunct(',');
+            out[2] = number();
+            // A fourth component is a filter or a transmit; read and dropped, since a caller that
+            // wants it asks for a material instead.
+            while (isPunct(',')) {
+                take();
+                (void)number();
+            }
+            expectPunct('>');
+            return;
+        }
         if (peek().kind == PovTokenKind::Word) {
             // POV names the three axes, and the exporter in this very repository uses them:
             // `plane{y, 0}`. A reader that did not know them would refuse a file it wrote itself.
@@ -205,7 +280,7 @@ private:
                 out[2] = w == "z" ? 1.0 : 0.0;
                 return;
             }
-            const auto it = m_vectors.find(peek().text);
+            const auto it = m_vectors.find(w);
             if (it != m_vectors.end()) {
                 take();
                 for (int i = 0; i < 3; ++i) {
@@ -214,25 +289,8 @@ private:
                 return;
             }
         }
-        if (!isPunct('<')) {
-            // POV lets a scalar stand for a uniform vector, which `scale 2` relies on.
-            const double v = number();
-            out[0] = out[1] = out[2] = v;
-            return;
-        }
-        take();
-        out[0] = number();
-        expectPunct(',');
-        out[1] = number();
-        expectPunct(',');
-        out[2] = number();
-        // A fourth component is a filter or a transmit; read and dropped, since a caller that
-        // wants it asks for a material instead.
-        while (isPunct(',')) {
-            take();
-            (void)number();
-        }
-        expectPunct('>');
+        const double v = number();
+        out[0] = out[1] = out[2] = v;
     }
 
     // ------------------------------------------------------------------ blocks
@@ -341,6 +399,10 @@ private:
 
         if (isWord("texture") || isWord("pigment") || isWord("finish") || isWord("normal")) {
             m_textures[name] = readAppearance();
+            return;
+        }
+        if (isWord("transform")) {
+            m_transforms[name] = readTransformBlock();
             return;
         }
         if (isObjectStart()) {
@@ -669,10 +731,19 @@ private:
         vector3(normal);
         expectPunct(',');
         const double dist = number();
-        if (std::fabs(normal[0]) > 1e-9 || std::fabs(normal[2]) > 1e-9 || normal[1] <= 0.0) {
-            refuse("this reader takes a plane whose normal is +Y");
+        const double len = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
+                                     normal[2] * normal[2]);
+        if (len < 1e-12) {
+            refuse("a plane needs a normal with a direction");
         }
-        return place(leaf(Op::Plane, "Plane"), 0.0, dist, 0.0);
+
+        // This model's Plane keeps the half below y = 0, so its outward normal is +Y -- the same
+        // sense POV gives a plane. Turning +Y onto the normal in the file therefore reproduces
+        // the half-space rather than its complement, and `plane{-y,0}` comes out as the upper
+        // half without needing a mirror.
+        const double u[3] = {normal[0] / len, normal[1] / len, normal[2] / len};
+        PovNode n = leaf(Op::Plane, "Plane");
+        return place(alignY(std::move(n), u, 1.0), u[0] * dist, u[1] * dist, u[2] * dist);
     }
 
     /// POV's disc: a centre, a normal, a radius, and optionally a hole.
@@ -695,16 +766,22 @@ private:
             take();
             hole = number();
         }
-        if (std::fabs(normal[0]) > 1e-9 || std::fabs(normal[2]) > 1e-9 || normal[1] <= 0.0) {
-            refuse("this reader takes a disc whose normal is +Y");
-        }
         if (radius <= 0.0) {
             refuse("a disc needs a positive radius");
+        }
+        const double len = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] +
+                                     normal[2] * normal[2]);
+        if (len < 1e-12) {
+            refuse("a disc needs a normal with a direction");
         }
         PovNode n = leaf(Op::Disc, "Disc");
         n.params[0] = static_cast<float>(radius);
         n.params[1] = static_cast<float>(hole);
-        return place(std::move(n), c[0], c[1], c[2]);
+        // Turned onto its normal by the same helper the cylinder uses. A disc is a solid of
+        // revolution about that normal, so two rotations place it and a third would only spin it
+        // in its own plane.
+        const double u[3] = {normal[0] / len, normal[1] / len, normal[2] / len};
+        return place(alignY(std::move(n), u, 1.0), c[0], c[1], c[2]);
     }
 
     /// Three points, verbatim. A triangle has no orientation to reconcile.
@@ -744,11 +821,20 @@ private:
         return modifiers(std::move(n));
     }
 
+    /// `object { ... }`, which POV uses two ways.
+    ///
+    /// With a name it is an instance of something declared earlier; with a shape inside it is
+    /// just a wrapper, and hand-written files use it that way to hang modifiers on a boolean.
+    /// Reading only the first form refuses files for a reason that has nothing to do with what
+    /// they contain.
     PovNode instance() {
         take();
         expectPunct('{');
+        if (isObjectStart()) {
+            return modifiers(readObject());
+        }
         if (peek().kind != PovTokenKind::Word) {
-            refuse("object{ needs the name of a declared object");
+            refuse("object{ needs a shape or the name of a declared object");
         }
         const std::string name = take().text;
         const auto it = m_objects.find(name);
@@ -775,6 +861,12 @@ private:
                 node = transform(std::move(node));
                 continue;
             }
+            if (isWord("transform")) {
+                for (const PovMove& m : readTransformBlock()) {
+                    node = applyMove(std::move(node), m.kind, m.v);
+                }
+                continue;
+            }
             if (peek().kind == PovTokenKind::Word && m_textures.count(peek().text) > 0) {
                 node.material = materialIndex(m_textures[take().text]);
                 continue;
@@ -792,11 +884,45 @@ private:
         return node;
     }
 
-    PovNode transform(PovNode node) {
-        const std::string kind = take().text;
-        double v[3];
-        vector3(v);
+    /// One `transform { ... }`, as the list of moves it stands for.
+    ///
+    /// Kept as a list rather than a matrix. This model has no matrix node -- a placement is a
+    /// stack of single-axis Rotates and one Translate and one Scale -- so a matrix would have to
+    /// be taken apart again, and a decomposition that is nearly right is worse than a list that
+    /// is exactly right.
+    std::vector<PovMove> readTransformBlock() {
+        take();   // transform
+        expectPunct('{');
+        std::vector<PovMove> out;
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("a transform block was not closed");
+            }
+            if (isWord("translate") || isWord("scale") || isWord("rotate")) {
+                PovMove m;
+                m.kind = take().text;
+                vector3(m.v);
+                out.push_back(m);
+                continue;
+            }
+            if (peek().kind == PovTokenKind::Word) {
+                const auto it = m_transforms.find(peek().text);
+                if (it != m_transforms.end()) {
+                    take();
+                    // A named transform inside another one composes, which is how POV builds a
+                    // placement out of parts.
+                    out.insert(out.end(), it->second.begin(), it->second.end());
+                    continue;
+                }
+                refuse("'" + peek().text + "' is not a declared transform");
+            }
+            refuse("a transform block takes translate, rotate, scale, or a declared transform");
+        }
+        take();
+        return out;
+    }
 
+    PovNode applyMove(PovNode node, const std::string& kind, const double v[3]) {
         if (kind == "translate") {
             PovNode t = wrap(std::move(node), Op::Translate);
             t.params[0] = static_cast<float>(v[0]);
@@ -804,6 +930,7 @@ private:
             t.params[2] = static_cast<float>(v[2]);
             return t;
         }
+
         if (kind == "scale") {
             for (int i = 0; i < 3; ++i) {
                 if (v[i] == 0.0) {
@@ -831,6 +958,14 @@ private:
             out.flags |= axes[i];
         }
         return out;
+    }
+
+    /// The modifier form: one move written straight onto an object.
+    PovNode transform(PovNode node) {
+        const std::string kind = take().text;
+        double v[3];
+        vector3(v);
+        return applyMove(std::move(node), kind, v);
     }
 
     int materialIndex(const Material& m) {
@@ -915,6 +1050,7 @@ private:
     std::map<std::string, std::vector<double>> m_vectors;
     std::map<std::string, Material> m_textures;
     std::map<std::string, PovNode> m_objects;
+    std::map<std::string, std::vector<PovMove>> m_transforms;
     std::vector<Material> m_materials;
     std::vector<std::string> m_unsupported;
 };

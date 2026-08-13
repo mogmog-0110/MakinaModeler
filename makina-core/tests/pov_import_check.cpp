@@ -176,8 +176,9 @@ void boundaries() {
     // Geometry this model cannot hold. Each of these would move or reshape the solid if guessed.
     refuses("cone{<0,0,0>,1,<0,2,0>,0.5}", "truncated");
     refuses("cylinder{<1,1,1>,<1,1,1>,0.5}", "distinct end points");
-    refuses("plane{<1,0,0>,0}", "+Y");
     refuses("sphere{<0,0,0>,-1}", "positive radius");
+    refuses("plane{<0,0,0>,0}", "a direction");
+    refuses("disc{<0,0,0>,<0,0,0>,1}", "a direction");
     refuses("box{<0,0,0>,<1,1,1> scale <0,1,1>}", "collapses");
     refuses("object{Nope}", "not a declared object");
     refuses("union{sphere{<0,0,0>,1}", "not closed");
@@ -221,6 +222,37 @@ void boundaries() {
               "a point beside the axis, further out than the radius, reads as inside");
     } catch (const makina::PovParseError& e) {
         check(false, std::string("a slanted cylinder was refused: ") + e.what());
+    }
+
+    // A plane facing the other way. POV's `-y` keeps the half above zero, and getting the sense
+    // backwards would produce the complement -- a solid that fills everything the file says is
+    // empty, which still renders.
+    try {
+        const makina::PovImportResult up = makina::importPov("plane{-y,0}");
+        const double above[3] = {0.0, 1.0, 0.0};
+        const double below[3] = {0.0, -1.0, 0.0};
+        check(makina::eval(up.scene, above) < 0.0, "plane{-y,0} should keep the half above zero");
+        check(makina::eval(up.scene, below) > 0.0, "plane{-y,0} should not keep the half below");
+
+        const makina::PovImportResult down = makina::importPov("plane{y,0}");
+        check(makina::eval(down.scene, below) < 0.0, "plane{y,0} should keep the half below zero");
+        check(makina::eval(down.scene, above) > 0.0, "plane{y,0} should not keep the half above");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("a plane was refused: ") + e.what());
+    }
+
+    // A transform declared once and used twice, which is how a hand-written file places a
+    // repeated part. The vector arithmetic is part of it: `rotate x*20` is not a literal.
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "#declare Turn = transform { rotate y*90 }\n"
+            "box{<-2,-0.2,-0.2>,<2,0.2,0.2> transform{Turn}}");
+        // Turned a quarter about Y, the long axis runs along z.
+        const makina::Aabb box = makina::worldBounds(r.scene).box;
+        check(box.valid && std::fabs(box.hi[2] - 2.0) < 1e-4 && std::fabs(box.hi[0] - 0.2) < 1e-4,
+              "a box turned 90 degrees about Y should be long in z and short in x");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("a declared transform was refused: ") + e.what());
     }
 
     // The whole point of the intermediate tree: an instance carries a transform of its own, and
