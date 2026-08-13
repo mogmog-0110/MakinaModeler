@@ -42,11 +42,74 @@ VSOut VSMain(uint vid : SV_VertexID) {
     return o;
 }
 
+/// Where the ray for this pixel starts and which way it goes.
+///
+/// The only thing a camera model changes in a ray marcher. A rasteriser needs a projection matrix
+/// and everything downstream has to agree with it; here a fisheye is four lines, and the cost of
+/// having five cameras instead of one is five lines rather than five pipelines.
+///
+/// POV's formulas, because the whole point of matching POV's shading was to make the pictures
+/// comparable, and a camera that framed the scene differently would make every pixel differ.
+void mkCameraRay(float2 ndc, out float3 ro, out float3 rd) {
+    ro = gEye;
+
+    if (gCameraKind == 1u) {
+        // Orthographic: every ray is parallel and the pixel moves the origin instead. gCameraAngle
+        // is a half-width in world units here, not an angle -- POV sizes this camera by the
+        // lengths of its right and up vectors and ignores its angle entirely.
+        ro = gEye + gRight * (ndc.x * gAspect * gCameraAngle) + gUp * (-ndc.y * gCameraAngle);
+        rd = gForward;
+        return;
+    }
+
+    if (gCameraKind == 2u || gCameraKind == 3u) {
+        // Fisheye and ultra wide angle differ only in whether the image is clipped to the circle
+        // the projection actually covers. POV draws the fisheye as an inscribed circle and leaves
+        // the corners black; ultra_wide_angle fills the frame by carrying on past 1.
+        // No aspect here, deliberately. POV normalises a fisheye by the lengths of its right and
+        // up vectors, so with right<-1,0,0> and up<0,1,0> the projection spans -1..1 across the
+        // frame in both axes -- an ellipse in pixels on a wide image, not a circle. Multiplying
+        // by the aspect gives the rounder picture and disagrees with the oracle everywhere.
+        const float2 p = float2(ndc.x, -ndc.y);
+        const float r = length(p);
+        if (gCameraKind == 2u && r > 1.0) {
+            rd = float3(0, 0, 0);   // outside the circle: the caller reads this as no ray
+            return;
+        }
+        const float theta = r * gCameraAngle * 0.5;
+        const float2 dir = r > 1e-6 ? p / r : float2(1, 0);
+        rd = normalize(gForward * cos(theta) +
+                       (gRight * dir.x + gUp * dir.y) * sin(theta));
+        return;
+    }
+
+    if (gCameraKind == 4u) {
+        // Panoramic: the horizontal axis wraps around the eye as a cylinder while the vertical
+        // stays flat. A single tangent plane cannot do this, which is why a rasteriser needs
+        // several passes for what is one line here.
+        // The vertical is the up vector itself, not a tangent of half the field. POV builds this
+        // ray as a unit horizontal direction plus y times up, so with up<0,1,0> the frame spans
+        // a quarter turn vertically however wide the horizontal angle is.
+        const float yaw = ndc.x * gCameraAngle * 0.5;
+        rd = normalize(gForward * cos(yaw) + gRight * sin(yaw) + gUp * (-ndc.y));
+        return;
+    }
+
+    rd = normalize(gForward
+                 + gRight * (ndc.x * gAspect * gTanHalfFov)
+                 + gUp    * (-ndc.y * gTanHalfFov));
+}
+
 float4 PSMain(VSOut i) : SV_Target {
     float2 ndc = i.uv * 2.0 - 1.0;
-    float3 rd = normalize(gForward
-                        + gRight * (ndc.x * gAspect * gTanHalfFov)
-                        + gUp    * (-ndc.y * gTanHalfFov));
+    float3 rayOrigin;
+    float3 rd;
+    mkCameraRay(ndc, rayOrigin, rd);
+    if (dot(rd, rd) < 0.5) {
+        // Outside a fisheye's circle. POV leaves this black rather than stretching the projection
+        // to fill the frame, and matching that is what keeps the two images comparable.
+        return float4(0, 0, 0, 1);
+    }
 
     // Scaled off the scene size rather than fixed, so a model authored in millimetres and one in
     // metres both resolve: a hit threshold that suits a 2-unit box misses a 0.02-unit one entirely.
@@ -57,7 +120,7 @@ float4 PSMain(VSOut i) : SV_Target {
     float t = 0.0;
     bool hit = false;
     for (uint s = 0; s < gMaxSteps; ++s) {
-        float d = evalCsg(gEye + rd * t);
+        float d = evalCsg(rayOrigin + rd * t);
         if (d < hitEps) { hit = true; break; }
         // Difference is max(a,-b), only a lower bound on the true distance, so a full step can
         // tunnel through a seam. Backing off is the guard (PLAN.md R-03).
@@ -73,7 +136,7 @@ float4 PSMain(VSOut i) : SV_Target {
         return float4(sky * 0.55, sky * 0.62, sky * 0.78, 1.0);
     }
 
-    float3 p = gEye + rd * t;
+    float3 p = rayOrigin + rd * t;
     float3 n = calcNormal(p, normalEps);
 
     float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;

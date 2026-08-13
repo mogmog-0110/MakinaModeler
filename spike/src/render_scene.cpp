@@ -89,7 +89,8 @@ struct alignas(256) FrameParams {
     float center[3];    float sceneRadius;
     std::uint32_t programCount;  std::uint32_t materialCount;
     std::uint32_t pigmentCount;  std::uint32_t povMatch;
-    std::uint32_t lightCount;    std::uint32_t padA;  std::uint32_t padB;  std::uint32_t padC;
+    std::uint32_t lightCount;    std::uint32_t cameraKind;
+    float         cameraAngle;   std::uint32_t padA;
     // Only the interactive viewport highlights a selection; zero here means "nothing selected",
     // which is what every offscreen render wants.
     float selMin[3];    float selValid;
@@ -146,6 +147,20 @@ bool hasTransparentMaterial(const makina::Scene& s) {
         }
     }
     return false;
+}
+
+/// Half the diagonal of a box, which is what every camera distance here is a multiple of.
+double radiusOf(const makina::Aabb& box) {
+    if (!box.valid) {
+        return 1.0;
+    }
+    double diag = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        const double span = box.hi[i] - box.lo[i];
+        diag += span * span;
+    }
+    const double r = std::sqrt(diag) * 0.5;
+    return r > 1e-4 ? r : 1e-4;
 }
 
 /// Frames the scene from its own bounds, so any model arrives in view without hand tuning.
@@ -346,6 +361,9 @@ int main(int argc, char** argv) {
     // are asked for the same thing -- so this mode also turns off the terms POV has no equivalent
     // for (scene_prelude.hlsl, gPovMatch).
     bool povMatch = false;
+    // Which camera turns a pixel into a ray. Only the ray generator changes, which is why five of
+    // them cost five lines here rather than five pipelines.
+    std::uint32_t cameraKind = 0;
     // Loop over a buffered program instead of generating straight-line code. Slower, but the
     // shader is the same for every scene -- which is what a runtime that cannot ship a shader
     // compiler needs (PLAN.md D-04).
@@ -363,6 +381,22 @@ int main(int argc, char** argv) {
         else if (a == "--mask") { shading = "scene_mask.hlsl"; prefix = "mask"; writePov = true; }
         else if (a == "--pov-match") { prefix = "shaded"; writePov = true; povMatch = true; }
         else if (a == "--interpret") { interpret = true; prefix = "interp"; }
+        else if (a == "--camera" && i + 1 < argc) {
+            const std::string k = argv[++i];
+            if (k == "perspective")           { cameraKind = 0; }
+            else if (k == "ortho")            { cameraKind = 1; }
+            else if (k == "fisheye")          { cameraKind = 2; }
+            else if (k == "ultra")            { cameraKind = 3; }
+            else if (k == "panoramic")        { cameraKind = 4; }
+            else {
+                std::fprintf(stderr,
+                             "error: '%s' is not a camera this renderer has; it takes "
+                             "perspective, ortho, fisheye, ultra or panoramic\n",
+                             k.c_str());
+                return 2;
+            }
+            prefix = "cam_" + k;
+        }
         else scenes.push_back(a);
     }
 
@@ -439,6 +473,21 @@ int main(int argc, char** argv) {
                     }
                     po.camera.fovY = 2.0 * std::atan(fp.tanHalfFov) * 180.0 / 3.14159265358979323846;
                     po.camera.aspect = fp.aspect;
+                    // The same camera POV has to use, or every pixel differs for a reason that
+                    // has nothing to do with the model.
+                    switch (cameraKind) {
+                        case 1: po.camera.kind = makina::PovCameraKind::Orthographic; break;
+                        case 2: po.camera.kind = makina::PovCameraKind::Fisheye; break;
+                        case 3: po.camera.kind = makina::PovCameraKind::UltraWideAngle; break;
+                        case 4: po.camera.kind = makina::PovCameraKind::Panoramic; break;
+                        default: po.camera.kind = makina::PovCameraKind::Perspective; break;
+                    }
+                    po.camera.orthoHalfWidth = radiusOf(bounds.box) * 1.1;
+                    if (cameraKind >= 2) {
+                        // 160 degrees, matching what the shader is given.
+                        po.camera.fovY = 160.0;
+                        po.camera.aspect = 1.0;
+                    }
 
                     const std::string povPath =
                         exeDir + "/" + (povMatch ? "shaded_" : "mask_") + tag + ".pov";
@@ -484,6 +533,14 @@ int main(int argc, char** argv) {
                     params.pigmentCount = scene.pigments.count;
                     params.povMatch = povMatch ? 1u : 0u;
                     params.lightCount = scene.lights.count;
+                    params.cameraKind = cameraKind;
+                    // A fisheye or a panoramic wants a much wider view than the framing angle,
+                    // and an orthographic wants a distance rather than an angle at all. Derived
+                    // from the same bounds the framing uses, so no camera needs hand tuning.
+                    params.cameraAngle =
+                        cameraKind == 1u
+                            ? static_cast<float>(radiusOf(bounds.box) * 1.1)
+                            : (cameraKind == 0u ? 0.0f : 2.7925f);   // 160 degrees
                     if (povMatch) {
                         // POV has no ambient occlusion at all. Leaving it on would darken every
                         // crease on one side only.

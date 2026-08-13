@@ -57,6 +57,12 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    every camera, framed the way POV-Ray frames it
+    echo.
+    call "%HERE%spike\camera-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    the baked DXIL against what the modeller compiles
     echo.
     call "%HERE%spike\bake-check.bat"

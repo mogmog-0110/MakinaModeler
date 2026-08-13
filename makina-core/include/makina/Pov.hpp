@@ -38,12 +38,21 @@ namespace makina {
 /// `fovY` is vertical, as OpenGL and the Makina renderer state it; POV's `angle` is horizontal, so
 /// it is converted here. Passing the vertical angle straight through would render a narrower image
 /// than the one being compared against -- the classic reason a POV cross-check "nearly" matches.
+
+/// How a pixel becomes a ray. POV's own names, because these end up in the file verbatim.
+enum class PovCameraKind { Perspective, Orthographic, Fisheye, UltraWideAngle, Panoramic };
+
 struct PovCamera {
     double eye[3]{0.0, 0.0, 5.0};
     double lookAt[3]{0.0, 0.0, 0.0};
     double up[3]{0.0, 1.0, 0.0};
     double fovY = 30.0;      ///< degrees
     double aspect = 4.0 / 3.0;  ///< width / height
+    PovCameraKind kind = PovCameraKind::Perspective;
+    /// Half-width of the view for an orthographic camera, in world units. POV takes the size of
+    /// an orthographic view from the length of its right and up vectors rather than from an
+    /// angle, which is why this is a distance and not degrees.
+    double orthoHalfWidth = 1.0;
 };
 
 struct PovOptions {
@@ -71,8 +80,22 @@ inline std::string writePovCamera(const PovCamera& c) {
     const double angle = 2.0 * std::atan(tanHalfV * c.aspect) * 180.0 / 3.14159265358979323846;
 
     std::string s = "camera{\n";
-    s += "\tright<" + num(-c.aspect) + ",0,0>\n";
-    s += "\tangle " + num(angle) + "\n";
+    switch (c.kind) {
+        case PovCameraKind::Orthographic:   s += "\torthographic\n"; break;
+        case PovCameraKind::Fisheye:        s += "\tfisheye\n"; break;
+        case PovCameraKind::UltraWideAngle: s += "\tultra_wide_angle\n"; break;
+        case PovCameraKind::Panoramic:      s += "\tpanoramic\n"; break;
+        case PovCameraKind::Perspective:    break;
+    }
+    if (c.kind == PovCameraKind::Orthographic) {
+        // POV sizes an orthographic view from the lengths of right and up and ignores angle
+        // entirely. Writing an angle anyway would look like it was doing something.
+        s += "\tright<" + num(-c.orthoHalfWidth * 2.0 * c.aspect) + ",0,0>\n";
+        s += "\tup<0," + num(c.orthoHalfWidth * 2.0) + ",0>\n";
+    } else {
+        s += "\tright<" + num(-c.aspect) + ",0,0>\n";
+        s += "\tangle " + num(angle) + "\n";
+    }
     s += "\tlocation" + vec3(c.eye[0], c.eye[1], c.eye[2]) + "\n";
     s += "\tlook_at" + vec3(c.lookAt[0], c.lookAt[1], c.lookAt[2]) + "\n";
     s += "\tsky" + vec3(c.up[0], c.up[1], c.up[2]) + "\n";

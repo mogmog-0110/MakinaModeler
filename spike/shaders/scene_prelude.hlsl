@@ -28,7 +28,12 @@ cbuffer Params : register(b0) {
     // Scalars, not an array. An array in a constant buffer puts every element on its own 16-byte
     // boundary, so `uint pad[3]` is 48 bytes here and 12 on the CPU -- and everything declared
     // after it reads from the wrong place, silently, with plausible values.
-    uint   gLightCount;   uint _cbPadA;  uint _cbPadB;  uint _cbPadC;
+    uint   gLightCount;
+    /// 0 perspective, 1 orthographic, 2 fisheye, 3 ultra wide angle, 4 panoramic.
+    uint   gCameraKind;
+    /// The full field of view in radians for the wide cameras, or the half-width in world units
+    /// for the orthographic one. One slot because no camera needs both.
+    float  gCameraAngle;  uint _cbPadA;
     // Selection highlight, as a world box. The viewport sets it; the offscreen renderer leaves
     // gSelValid at zero, so both use the same layout and the same generated shaders.
     float3 gSelMin;     float gSelValid;
