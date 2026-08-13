@@ -249,14 +249,36 @@ inline EditResult applyTransform(const Scene& s, std::uint32_t id, TransformKind
     // already turns about the axis being asked for -- adding 30 degrees of Y to a node that
     // rotates about X would silently change what the existing rotation meant.
     const CsgNode& node = s.nodes[index];
-    const bool reuse =
-        static_cast<Op>(node.op) == want &&
-        (kind != TransformKind::Rotate || (node.flags & flags::kAxisMask) == detail::axisFlag(axis));
+    const auto rightKind = [&](const CsgNode& n) {
+        return static_cast<Op>(n.op) == want &&
+               (kind != TransformKind::Rotate ||
+                (n.flags & flags::kAxisMask) == detail::axisFlag(axis));
+    };
+
+    // The wrapper this function put there last time counts as well.
+    //
+    // Without this, nudging the same part twice leaves two Translates stacked on it, and ten
+    // nudges leave ten. The tree is a fixed-capacity array, so that is not only untidy -- a
+    // session of small adjustments walks towards the node limit and the outliner fills with
+    // wrappers nobody made on purpose.
+    //
+    // Only when the parent holds this node and nothing else. A transform with several children is
+    // a group the user built, and folding one child's move into it would move its siblings too.
+    std::uint32_t editId = id;
+    bool reuse = rightKind(node);
+    if (!reuse && node.parent != kNoParent && node.parent != 0) {
+        const CsgNode& above = s.nodes[node.parent];
+        if (above.childCount == 1 && rightKind(above)) {
+            reuse = true;
+            editId = above.id;
+        }
+    }
 
     if (reuse) {
+        const CsgNode& target = s.nodes[indexOfId(s, editId)];
         float params[12];
         for (int i = 0; i < 12; ++i) {
-            params[i] = node.params[i];
+            params[i] = target.params[i];
         }
         switch (kind) {
             case TransformKind::Move:
@@ -287,7 +309,7 @@ inline EditResult applyTransform(const Scene& s, std::uint32_t id, TransformKind
             default:
                 break;
         }
-        return setParams(s, id, params);
+        return setParams(s, editId, params);
     }
 
     // Otherwise the node gains a transform above it.

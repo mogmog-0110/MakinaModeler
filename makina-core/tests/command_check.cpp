@@ -111,6 +111,46 @@ void exercise(const std::string& path) {
     check(!r.ok, "duplicating the root was accepted");
     history.undo();
 
+    // Translating, rotating and scaling: the three the viewport spends its time on, and the ones
+    // the command layer had no answer for at all. `move` is a reparent, so before this a script
+    // could put a node elsewhere in the tree and not shift it.
+    //
+    // Checked against the tree rather than against the return value: what matters is that a node
+    // with no transform of its own grew one, which is the case a caller cannot do with `set`.
+    {
+        const std::uint32_t before = history.current().nodes.count;
+        r = makina::runCommand(history,
+                               json{{"op", "translate"}, {"id", pin}, {"axis", "y"},
+                                    {"amount", 2.5}});
+        check(r.ok, "translate: " + r.message);
+        check(history.current().nodes.count == before + 1,
+              "translate: a node with no transform should have grown one");
+
+        // And again on the same node, which now has one: the numbers change and no node appears.
+        const std::uint32_t grown = history.current().nodes.count;
+        r = makina::runCommand(history,
+                               json{{"op", "translate"}, {"id", pin}, {"axis", "y"},
+                                    {"amount", 1.0}});
+        check(r.ok, "translate again: " + r.message);
+        check(history.current().nodes.count == grown,
+              "translate: a second move should not grow a second transform");
+
+        r = makina::runCommand(history,
+                               json{{"op", "rotate"}, {"id", pin}, {"axis", "z"}, {"amount", 30.0}});
+        check(r.ok, "rotate: " + r.message);
+        r = makina::runCommand(history,
+                               json{{"op", "scale"}, {"id", pin}, {"axis", "x"}, {"amount", 1.5}});
+        check(r.ok, "scale: " + r.message);
+
+        // An axis has to be given. Guessing one moves the node somewhere nobody asked for.
+        r = makina::runCommand(history, json{{"op", "translate"}, {"id", pin}, {"amount", 1.0}});
+        check(!r.ok, "a transform with no axis was accepted");
+        r = makina::runCommand(history,
+                               json{{"op", "translate"}, {"id", 999999}, {"axis", "x"},
+                                    {"amount", 1.0}});
+        check(!r.ok, "translating an id that is not there was accepted");
+    }
+
     // Muting from here, because the viewport can and the two have to offer the same edits. An
     // operation that only one of them has is a modeller whose capabilities depend on which way it
     // is driven.

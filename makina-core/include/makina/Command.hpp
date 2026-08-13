@@ -18,6 +18,7 @@
 #pragma once
 
 #include "Edit.hpp"
+#include "Transform.hpp"
 #include "History.hpp"
 #include "Op.hpp"
 #include "Scene.hpp"
@@ -268,6 +269,42 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         return r;
     }
 
+    if (op == "translate" || op == "rotate" || op == "scale") {
+        // The three edits the viewport spends most of its time on, and the command layer had none
+        // of them. `move` here means reparent, so a script could put a node somewhere else in the
+        // tree and could not shift it a millimetre -- unless the node already had a Translate to
+        // `set`, which is the case Transform.hpp exists to remove.
+        //
+        // Same call the viewport makes, so a node with no transform of its own grows one and a
+        // node that has one has its numbers changed. Two implementations of that rule would be two
+        // answers to "what does moving a bare Box mean".
+        const std::uint32_t id = cmd.value("id", 0u);
+        const std::string axisName = cmd.value("axis", std::string());
+        TransformAxis axis = TransformAxis::None;
+        if (axisName == "x" || axisName == "X") { axis = TransformAxis::X; }
+        else if (axisName == "y" || axisName == "Y") { axis = TransformAxis::Y; }
+        else if (axisName == "z" || axisName == "Z") { axis = TransformAxis::Z; }
+        else {
+            // Refused rather than defaulted. Guessing an axis would move the node somewhere the
+            // caller did not ask for, and a modeller that quietly picks X is worse than one that
+            // says it needs to be told.
+            r.message = "transform needs \"axis\": \"x\", \"y\" or \"z\"";
+            return r;
+        }
+        const TransformKind kind = op == "translate" ? TransformKind::Move
+                                   : op == "rotate"  ? TransformKind::Rotate
+                                                     : TransformKind::Scale;
+        const EditResult e = applyTransform(s, id, kind, axis, cmd.value("amount", 0.0));
+        if (!e.ok) {
+            r.message = e.why;
+            return r;
+        }
+        history.commit(e.scene, op + " id " + std::to_string(id));
+        r.ok = true;
+        r.message = op + " applied";
+        return r;
+    }
+
     if (op == "mute") {
         // Takes a node out of the solid, or puts it back. Not "hide": in a CSG tree the shape is
         // the picture, so muting the cutter of a difference fills the hole in (Op.hpp).
@@ -298,8 +335,8 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         return r;
     }
 
-    r.message = "unknown command '" + op + "'; expected one of add, remove, duplicate, move, set, "
-                "rename, material, mute, undo, redo";
+    r.message = "unknown command '" + op + "'; expected one of add, remove, duplicate, move, "
+                "translate, rotate, scale, set, rename, material, mute, undo, redo";
     return r;
 }
 
