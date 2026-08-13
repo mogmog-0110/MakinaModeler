@@ -15,6 +15,14 @@
 #define MAKINA_SCENE_WEATHERED_HLSL
 
 #include "fields.hlsl"
+// The materials, for one field of them: `alpha`. This look invents its own albedo, roughness
+// and metallic from the geometry (WEATHERING.md 2.1) and reads none of POV's finish -- but a
+// solid the modeller made see-through has to be see-through here too, or the hero image of a
+// bottle is a bottle-shaped lump.
+#include "scene_finish.hlsl"
+// The march itself, shared with the POV-matched pass so the two cannot disagree about where a
+// surface is.
+#include "scene_march.hlsl"
 
 struct Surface {
     float3 albedo;
@@ -242,16 +250,9 @@ float4 PSMain(VSOut i) : SV_Target {
     float hitEps = gFarDist * 3.0e-5;
     FieldScales scales = mkFieldScales(gSceneRadius);
 
-    float t = 0.0;
-    bool hit = false;
-    for (uint s = 0; s < gMaxSteps; ++s) {
-        float d = evalCsg(gEye + rd * t);
-        if (d < hitEps) { hit = true; break; }
-        // Difference is max(a,-b), only a lower bound on the true distance, so a full step can
-        // tunnel through a seam (PLAN.md R-03).
-        t += d * gStepScale;
-        if (t > gFarDist) break;
-    }
+    const MkSurfaceHit first = mkNextSurface(gEye, rd, hitEps, scales.normalEps);
+    const bool hit = first.hit;
+    const float t = first.t;
 
     // The floor is analytic, not part of the CSG. Folding it into evalCsg would drag it into every
     // geometry field as well: an infinite plane under the model reads as a huge unoccluded
@@ -306,14 +307,83 @@ float4 PSMain(VSOut i) : SV_Target {
         return float4(pow(saturate(mkBackground(rd)), 1.0 / 2.2), 1.0);
     }
 
-    float3 p = gEye + rd * t;
-    GeoFields fields = mkGeoFields(p, scales.normalEps, scales.curvatureEps, scales.aoReach,
-                                  scales.thicknessReach);
-    float skyBias = gFarDist * 2.0e-3;
-    float sky = mkSoftShadow(p + fields.normal * skyBias, float3(0.0, 1.0, 0.0), skyBias,
-                             gFarDist * 0.35, 4.0, 14u);
-    Surface s = mkWeather(fields, sky);
-    float3 col = mkShade(s, fields, p, -rd);
+    // Surfaces front to back, as far as the light lasts.
+    //
+    // Same shape as the POV-matched pass and for the same reason: a see-through solid drawn at its
+    // first surface is drawn as a solid one. What differs is only what each layer is shaded with --
+    // this look derives its own material from the fields rather than reading POV's finish.
+    //
+    // The layer cap matches the other pass so a scene does not change depth when the look changes.
+    const uint kMaxLayers = 5u;
+
+    float3 col = float3(0.0, 0.0, 0.0);
+    float3 through = float3(1.0, 1.0, 1.0);
+    float3 origin = gEye;
+    MkSurfaceHit surface = first;
+
+    for (uint layer = 0u; layer < kMaxLayers; ++layer) {
+        if (!surface.hit) {
+            col += through * mkBackground(rd);
+            break;
+        }
+        const float3 p = surface.p;
+
+        // The full field set is derived for the first surface only.
+        //
+        // Deriving it is what this look costs: an occlusion cone, a second set of taps at a wider
+        // spacing for curvature, and an inward march for thickness. Paying that on every layer
+        // multiplies the whole look by the layer count -- measured at 8.9 ms before the layers and
+        // 31.4 after, against a ceiling of 33.
+        //
+        // Deeper layers are being looked at through a wall. Whether the dust on them has settled
+        // is not readable there, so they are shaded as clean material: the normal the march
+        // already worked out, and neutral fields. That is a statement about what is visible, not a
+        // tolerance that was widened until the number passed.
+        GeoFields fields;
+        fields.normal = surface.n;
+        fields.ao = 1.0;
+        fields.curvature = 0.0;
+        fields.thickness = 1.0;
+        fields.upFacing = saturate(surface.n.y);
+        if (layer == 0u) {
+            fields = mkGeoFields(p, scales.normalEps, scales.curvatureEps, scales.aoReach,
+                                 scales.thicknessReach);
+            // The gradient points out of the solid, so the far wall of a see-through part would
+            // light as though it faced away. Turned towards the ray, which is what the march
+            // already worked out on the way in.
+            fields.normal = surface.n;
+        }
+        // The sky term is a soft shadow march of its own, and it is the most expensive thing on
+        // this surface. Only the first layer pays for it: everything deeper is being looked at
+        // through a wall, where the difference between dust that has settled and dust that has not
+        // is not readable, and the layer march would otherwise multiply the cost of the whole look
+        // by the number of layers.
+        float sky = 1.0;
+        if (layer == 0u) {
+            const float skyBias = gFarDist * 2.0e-3;
+            sky = mkSoftShadow(p + fields.normal * skyBias, float3(0.0, 1.0, 0.0), skyBias,
+                               gFarDist * 0.35, 4.0, 14u);
+        }
+        Surface s = mkWeather(fields, sky);
+        const float3 here = mkShade(s, fields, p, -rd);
+
+        const MkMaterial mat = mkMaterialAt(evalCsgMaterial(p).y, gMaterialCount);
+        const float filt = saturate(1.0 - mat.alpha);
+        // POV's weighting, because it is the one measured against the oracle: the surface keeps
+        // what is left after the brightest channel of its own color is taken out (scene_shading).
+        const float weight = 1.0 - filt * max(mat.diffuseColor.r,
+                                              max(mat.diffuseColor.g, mat.diffuseColor.b));
+        col += through * here * weight;
+        if (filt <= 0.0) {
+            break;
+        }
+        through *= filt * mat.diffuseColor;
+        if (max(through.r, max(through.g, through.b)) < 1.0 / 512.0) {
+            break;
+        }
+        origin = p + rd * mkStepOff(p, rd, hitEps);
+        surface = mkNextSurface(origin, rd, hitEps, scales.normalEps);
+    }
 
     // Filmic-ish curve: a plain clamp blows out every polished edge into a white blob.
     col = col / (col + 0.85);

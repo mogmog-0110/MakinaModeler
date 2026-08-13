@@ -9,14 +9,8 @@
 // After scene_finish, because the shadow march needs evalCsg and the light table needs somewhere
 // to sit that both this and the engine wrapper can reach.
 #include "scene_lights.hlsl"
-
-float3 calcNormal(float3 p, float h) {
-    const float2 k = float2(1.0, -1.0);
-    return normalize(k.xyy * evalCsg(p + k.xyy * h) +
-                     k.yyx * evalCsg(p + k.yyx * h) +
-                     k.yxy * evalCsg(p + k.yxy * h) +
-                     k.xxx * evalCsg(p + k.xxx * h));
-}
+// After both, because the march needs calcNormal and the shader-wide constants.
+#include "scene_march.hlsl"
 
 float calcAO(float3 p, float3 n, float reach) {
     float occ = 0.0;
@@ -221,19 +215,8 @@ float4 PSMain(VSOut i) : SV_Target {
     bool   anyHit = false;
 
     for (uint layer = 0u; layer < kMaxLayers; ++layer) {
-        float t = 0.0;
-        bool hit = false;
-        for (uint s = 0; s < gMaxSteps; ++s) {
-            // The magnitude, not the value. After the first surface the ray carries on from inside
-            // the solid, where the field is negative and a signed test would read every step as a
-            // hit. Marching by |d| walks the interior and stops on the way out.
-            float d = evalCsg(origin + rd * t);
-            if (abs(d) < hitEps) { hit = true; break; }
-            // Difference is max(a,-b), only a lower bound on the true distance, so a full step can
-            // tunnel through a seam. Backing off is the guard (PLAN.md R-03).
-            t += abs(d) * gStepScale;
-            if (t > gFarDist) break;
-        }
+        const MkSurfaceHit surface = mkNextSurface(origin, rd, hitEps, normalEps);
+        const bool hit = surface.hit;
 
         if (!hit) {
             if (gPovMatch == 0u) {
@@ -244,17 +227,11 @@ float4 PSMain(VSOut i) : SV_Target {
         }
 
         anyHit = true;
-        p = origin + rd * t;
-        n = calcNormal(p, normalEps);
-        // Turned to face the ray. The gradient always points out of the solid, so the far
-        // wall of a transparent object -- reached from the inside -- would come back with its
-        // normal aimed away and light as though it were in shadow. POV has no notion of a
-        // back face: it flips the normal towards whatever is looking at the surface, which is
-        // also why a plane in POV is lit from either side.
-        const bool entering = dot(n, rd) < 0.0;
-        if (!entering) {
-            n = -n;
-        }
+        p = surface.p;
+        // The normal already faces the ray, and `entering` already says which side of the
+        // interface this is. scene_march.hlsl carries the reason, shared with the other pass.
+        n = surface.n;
+        const bool entering = surface.entering;
 
         float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;
 
@@ -325,20 +302,10 @@ float4 PSMain(VSOut i) : SV_Target {
             rd = dot(bent, bent) > 0.0 ? bent : reflect(rd, n);
         }
 
-        // Off the surface far enough that the next march cannot find it again. A fixed nudge
-        // is not enough at a grazing angle: the field stays inside the hit threshold for a
-        // long stretch there, so the next march reports an immediate hit on the surface just
-        // shaded and composites it over itself once per layer. That showed as a bright fringe
-        // on the silhouette -- 134 where POV had 66 -- while the interior of the same solid
-        // agreed level for level.
-        float off = hitEps * 4.0;
-        for (uint g = 0u; g < 64u; ++g) {
-            if (abs(evalCsg(p + rd * off)) > hitEps) {
-                break;
-            }
-            off += hitEps * 2.0;
-        }
-        origin = p + rd * off;
+        // Off the surface far enough that the next march cannot find it again -- the reason
+        // that is not a fixed nudge is in scene_march.hlsl, where it is shared with the
+        // weathered pass.
+        origin = p + rd * mkStepOff(p, rd, hitEps);
     }
 
     if (!anyHit) {
