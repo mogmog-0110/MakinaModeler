@@ -6,6 +6,7 @@
 // command failed and that the scene is where it was.
 
 #include <makina/Command.hpp>
+#include <makina/Edit.hpp>
 #include <makina/SceneJson.hpp>
 
 #include <cstdio>
@@ -109,6 +110,37 @@ void exercise(const std::string& path) {
     r = makina::runCommand(history, json{{"op", "duplicate"}, {"id", rootId}});
     check(!r.ok, "duplicating the root was accepted");
     history.undo();
+
+    // Muting from here, because the viewport can and the two have to offer the same edits. An
+    // operation that only one of them has is a modeller whose capabilities depend on which way it
+    // is driven.
+    r = makina::runCommand(history, json{{"op", "mute"}, {"id", pin}});
+    check(r.ok, "mute: " + r.message);
+    {
+        const std::uint16_t muted = makina::indexOfId(history.current(), pin);
+        check(muted != makina::kNoChild, "mute: lost the node");
+        if (muted != makina::kNoChild) {
+            check((history.current().nodes[muted].flags & makina::flags::kMuted) != 0,
+                  "mute: the flag is not set");
+            // Still in the tree. That is the whole difference between muting and deleting, and it
+            // is why muting is undoable by muting again rather than by putting a node back.
+            check(makina::withoutMuted(history.current()).nodes.count <
+                      history.current().nodes.count,
+                  "mute: the node stayed in the solid");
+        }
+    }
+    r = makina::runCommand(history, json{{"op", "mute"}, {"id", pin}, {"muted", false}});
+    check(r.ok, "unmute: " + r.message);
+    {
+        const std::uint16_t back = makina::indexOfId(history.current(), pin);
+        check(back != makina::kNoChild && (history.current().nodes[back].flags &
+                                           makina::flags::kMuted) == 0,
+              "unmute: the flag is still set");
+    }
+    r = makina::runCommand(history, json{{"op", "mute"}, {"id", 999999}});
+    check(!r.ok, "muting an id that is not there was accepted");
+    r = makina::runCommand(history, json{{"op", "mute"}, {"id", rootId}});
+    check(!r.ok, "muting the root was accepted");
 
     // A batch stops at the first failure rather than applying the rest.
     const std::uint32_t beforeBatch = history.current().nodes.count;

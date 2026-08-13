@@ -268,8 +268,38 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         return r;
     }
 
+    if (op == "mute") {
+        // Takes a node out of the solid, or puts it back. Not "hide": in a CSG tree the shape is
+        // the picture, so muting the cutter of a difference fills the hole in (Op.hpp).
+        //
+        // Here because the viewport can do it, and Phase 3's condition is that the same edits are
+        // reachable from the command line. An operation one of them has and the other does not is a
+        // modeller with two different sets of capabilities depending on which way you drive it.
+        const std::uint32_t id = cmd.value("id", 0u);
+        const std::uint16_t index = indexOfId(s, id);
+        if (index == kNoChild) {
+            r.message = "no node with id " + std::to_string(id);
+            return r;
+        }
+        if (index == 0) {
+            r.message = "the root cannot be muted";
+            return r;
+        }
+        const bool on = cmd.value("muted", true);
+        Scene next = s;
+        if (on) {
+            next.nodes[index].flags |= flags::kMuted;
+        } else {
+            next.nodes[index].flags &= static_cast<std::uint16_t>(~flags::kMuted);
+        }
+        history.commit(next, (on ? "mute id " : "unmute id ") + std::to_string(id));
+        r.ok = true;
+        r.message = on ? "muted" : "unmuted";
+        return r;
+    }
+
     r.message = "unknown command '" + op + "'; expected one of add, remove, duplicate, move, set, "
-                "rename, material, undo, redo";
+                "rename, material, mute, undo, redo";
     return r;
 }
 
