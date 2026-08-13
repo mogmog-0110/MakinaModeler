@@ -131,14 +131,20 @@ if(WIN32 AND DXC_EXECUTABLE)
         # Under assets/, because the page is loaded through the engine's app:// scheme rather
         # than file://. The scheme handler is rooted at <exe>/assets and is the path the bridge
         # is built for; a file:// document is a different origin and its cefQuery never arrives.
-        add_custom_command(TARGET makina_viewport POST_BUILD
+        # A target of its own, not POST_BUILD. Editing shell.html relinks nothing, so a
+        # POST_BUILD step attached to the exe simply does not run -- the build says it succeeded
+        # and the window keeps showing the previous page. That cost an hour: a CSS rule was
+        # fixed, rebuilt, retested and still wrong, because the file under test was the old one.
+        # A custom target with ALL runs every time.
+        add_custom_target(makina_shell ALL
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/ui"
-                "$<TARGET_FILE_DIR:makina_viewport>/assets/ui"
+                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/assets/ui"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${MITIRU_DIR}/web/mitiru_runtime"
-                "$<TARGET_FILE_DIR:makina_viewport>/assets/ui/mitiru_runtime"
+                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/assets/ui/mitiru_runtime"
             COMMENT "makina_viewport: deploying the shell and the binder")
+        add_dependencies(makina_viewport makina_shell)
     else()
         message(STATUS
             "makina_viewport: CEF not found under '${MITIRU_DIR}' -- the viewport will build "

@@ -674,12 +674,36 @@ int main(int argc, char** argv) {
                 shell.resize(in.width, in.height);
             }
 
-            // What the page clicked, taken on this thread. The marker is the same one --actions
-            // uses, so a button, a scripted action and a key all arrive at one branch.
+            // What the page clicked, taken on this thread. Most of it becomes the same marker
+            // --actions uses, so a button, a scripted action and a key all arrive at one branch.
+            //
+            // A row in the outliner is the exception: it names which node, and the viewport's
+            // select.pick means "whatever is under the cursor". Sending it through the marker
+            // would fire a ray into the scene from a cursor sitting on the panel, which either
+            // selects nothing or selects whatever happens to be behind the tree -- and neither
+            // is the row the user clicked.
             {
                 std::lock_guard<std::mutex> lock(pendingMutex);
                 if (!pendingAction.empty()) {
-                    in.keysPressed.push_back("@" + pendingAction);
+                    bool handled = false;
+                    if (pendingAction == "select.pick" && !pendingPayload.empty()) {
+                        const std::uint32_t id =
+                            static_cast<std::uint32_t>(std::atoi(pendingPayload.c_str()));
+                        if (id != 0 && makina::indexOfId(history.current(), id) !=
+                                           makina::kNoChild) {
+                            selection = makina::selectOnly(id);
+                            // The ladder click and box selection share resets to nothing else,
+                            // so the outliner does the same: a pick from anywhere is a fresh
+                            // start, and descending is a gesture the panel does not have.
+                            descendDepth = 0;
+                            lastPickedId = id;
+                            std::printf("selected %u from the outliner\n", id);
+                            handled = true;
+                        }
+                    }
+                    if (!handled) {
+                        in.keysPressed.push_back("@" + pendingAction);
+                    }
                     pendingAction.clear();
                     pendingPayload.clear();
                 }

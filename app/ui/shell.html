@@ -61,7 +61,12 @@
     font: 12px/1.5 "Segoe UI", "Meiryo", "Yu Gothic UI", system-ui, sans-serif;
     color: var(--ink);
   }
-  button, input, select, label, .panel, .bar, .status { pointer-events: auto; }
+  /* 中央だけが穴で、それ以外は全部マウスを取る。
+     以前は取る側を部品名で数え上げていて、`.tree` が抜けていた。ツリーの行はきちんと
+     描画され、ハイライトも C++ から届き、**クリックだけが素通りしていた**。板を 1 枚
+     足すたびにこの一覧を直す設計は、いつか同じことをする。 */
+  .bar, .tree, .prop, .status { pointer-events: auto; }
+  .view { pointer-events: none; }
 
   .frame {
     position: absolute; inset: 0;
