@@ -124,6 +124,20 @@ public:
     SwapchainDevice& operator=(const SwapchainDevice&) = delete;
 
     [[nodiscard]] ID3D12Device* device() const noexcept { return m_device.Get(); }
+
+    /// The queue everything here is submitted on.
+    ///
+    /// Exposed for the shell: the engine's CEF layer uploads the page's pixels through a queue of
+    /// its own choosing, and giving it a second one would put two producers on the same texture
+    /// with nothing ordering them.
+    [[nodiscard]] ID3D12CommandQueue* queue() const noexcept { return m_queue.Get(); }
+
+    /// The render target this frame draws into.
+    [[nodiscard]] D3D12_CPU_DESCRIPTOR_HANDLE backBufferRtv() const noexcept {
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        rtv.ptr += static_cast<SIZE_T>(m_frame) * m_rtvSize;
+        return rtv;
+    }
     [[nodiscard]] ID3D12GraphicsCommandList* list() const noexcept { return m_list.Get(); }
     [[nodiscard]] const std::wstring& adapterName() const noexcept { return m_adapterName; }
     [[nodiscard]] int width() const noexcept { return m_width; }
@@ -141,8 +155,7 @@ public:
         transition(m_targets[m_frame].Get(), D3D12_RESOURCE_STATE_PRESENT,
                    D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        rtv.ptr += static_cast<SIZE_T>(m_frame) * m_rtvSize;
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtv = backBufferRtv();
         m_list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         m_list->ClearRenderTargetView(rtv, clear, 0, nullptr);
 

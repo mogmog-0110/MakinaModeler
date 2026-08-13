@@ -93,6 +93,54 @@ if(WIN32 AND DXC_EXECUTABLE)
             "SHELL:/external:I ${MAKINA_CORE_DIR}/external"
             /external:W0)
     endif()
+
+    # ------------------------------------------------------------ the shell (CEF)
+    #
+    # PLAN.md D-13: app/ui/shell.html is drawn by the engine's CEF layer, which Makina uses as
+    # headers. No mitiru library is linked -- the layer was decoupled to raw D3D12 handles
+    # precisely so that a project with its own device could use it.
+    #
+    # The two cmake modules are reused rather than copied. A copy would start out identical and
+    # then drift the first time either project learned something about deploying CEF, and the one
+    # that did not learn would fail at run time with a missing .pak rather than at build time.
+    #
+    # HELPER_SOURCE is passed because the default path expects the engine's own MitiruCefHelper
+    # target, which only exists inside the engine's build. HELPER_NAME keeps the produced exe
+    # called MitiruCefHelper.exe, which is the name buildCefSettings() looks for.
+    #
+    # Everything here is conditional: no CEF means the viewport still builds and simply draws no
+    # shell. The modeller without its panels is a worse program, not a broken one, and a hard
+    # failure would make `python tools/fetch_cef.py` (800 MB) a prerequisite for touching the
+    # renderer.
+    list(APPEND CMAKE_MODULE_PATH "${MITIRU_DIR}/cmake")
+    find_package(CEF QUIET)
+    if(CEF_FOUND)
+        include(MitiruCef)
+        mitiru_add_cef_game(makina_viewport
+            HELPER_SOURCE "${MITIRU_DIR}/src/cef_subprocess_main.cpp"
+            HELPER_NAME   MitiruCefHelper)
+        target_include_directories(makina_viewport PRIVATE "${MITIRU_DIR}/include")
+        # Only the raw-handle entry points. The Dx12Device-flavoured conveniences would drag the
+        # engine's whole device stack -- IDevice, the swap chain, the window, sgc -- through a
+        # header, which is the coupling D-13 exists to avoid. Makina has its own device; taking
+        # the engine's as well would make "does not link the engine" true only of the linker.
+        target_compile_definitions(makina_viewport PRIVATE MITIRU_CEF_NO_DX12DEVICE)
+
+        # The page and the binder, next to the exe. The binder is the engine's, copied rather
+        # than shared: it has to sit beside the html for a file:// URL to resolve it.
+        add_custom_command(TARGET makina_viewport POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/ui"
+                "$<TARGET_FILE_DIR:makina_viewport>/ui"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${MITIRU_DIR}/web/mitiru_runtime"
+                "$<TARGET_FILE_DIR:makina_viewport>/ui/mitiru_runtime"
+            COMMENT "makina_viewport: deploying the shell and the binder")
+    else()
+        message(STATUS
+            "makina_viewport: CEF not found under '${MITIRU_DIR}' -- the viewport will build "
+            "without the shell (run python tools/fetch_cef.py in the engine to enable it)")
+    endif()
 else()
     message(STATUS "makina_viewport skipped: needs Windows and dxc")
 endif()

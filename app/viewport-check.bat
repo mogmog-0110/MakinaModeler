@@ -38,7 +38,7 @@ REM Node 4 is the Translate carrying the neck and shoulder, y = 3.0987 in the so
 REM Node 15 is a Cylinder with no transform of its own, so moving it has to grow one.
 
 echo    baseline
-"%EXE%" "%SCENE%" --frames 3 --save "%OUT%\base.json" >nul 2>&1
+"%EXE%" "%SCENE%" --no-shell --frames 3 --save "%OUT%\base.json" >nul 2>&1
 if errorlevel 1 (
     echo    FAILED: the viewport did not start
     exit /b 1
@@ -143,7 +143,7 @@ REM
 REM Nodes 13 and 15 are selected on the way in, so a dump that does not mark them is a dump built
 REM from something other than what the viewport is showing.
 echo    view state
-"%EXE%" "%SCENE%" --select "13,15" --frames 6 --dump-state "%OUT%\state.json" ^
+"%EXE%" "%SCENE%" --no-shell --select "13,15" --frames 6 --dump-state "%OUT%\state.json" ^
     >"%OUT%\state.log" 2>&1
 if errorlevel 1 (
     echo       FAILED: the run did not finish - see %OUT%\state.log
@@ -155,6 +155,22 @@ call :inState "id.:15,[^{]*selected.:true" "the live selection has to reach the 
 call :inState "id.:14,[^{]*selected.:false" "and an unselected node must not be marked"
 call :inState "Cylinder +1" "the status bar has to say what is selected"
 
+REM The shell itself, drawn over the frame.
+REM
+REM Every case above passes --no-shell, and a flag that turns a feature off is also a way to stop
+REM checking it. So one run keeps it and has to differ from the same run without it: if the page
+REM never reached the back buffer the two pictures would be identical, which is precisely the
+REM failure this is here to catch.
+REM
+REM 120 frames rather than 40 -- a browser process takes a moment to paint, and a picture taken
+REM before the first paint agrees with the one that has no shell at all, for the wrong reason.
+echo    shell
+"%EXE%" "%SCENE%" --no-shell --frames 120 --screenshot "%OUT%\bare.ppm" ^
+    >"%OUT%\bare.log" 2>&1
+"%EXE%" "%SCENE%" --frames 120 --screenshot "%OUT%\dressed.ppm" ^
+    >"%OUT%\dressed.log" 2>&1
+call :diffPic bare dressed "the shell has to reach the back buffer"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -165,7 +181,7 @@ exit /b 1
 
 :run
 echo    %~1
-"%EXE%" "%SCENE%" --select %~2 --keys "%~3" --frames 40 --save "%OUT%\%~1.json" >"%OUT%\%~1.log" 2>&1
+"%EXE%" "%SCENE%" --no-shell --select %~2 --keys "%~3" --frames 40 --save "%OUT%\%~1.json" >"%OUT%\%~1.log" 2>&1
 if errorlevel 1 (
     echo       FAILED: the run did not finish - see %OUT%\%~1.log
     set FAILED=1
@@ -174,7 +190,7 @@ exit /b 0
 
 REM Like :run, but keeps the frame instead of the tree.
 :shot
-"%EXE%" "%SCENE%" --select %~2 --keys "%~3" --frames 40 --screenshot "%OUT%\%~1.ppm" ^
+"%EXE%" "%SCENE%" --no-shell --select %~2 --keys "%~3" --frames 40 --screenshot "%OUT%\%~1.ppm" ^
     >"%OUT%\%~1.log" 2>&1
 if errorlevel 1 (
     echo       FAILED: the run did not finish - see %OUT%\%~1.log
@@ -186,7 +202,7 @@ REM Like :shot, but driven by action names instead of keys. view.genuine has no 
 REM either preset -- it is a toolbar control in Grasp3D and neither Maya nor Blender has the
 REM concept -- so there is no key to press for it.
 :actshot
-"%EXE%" "%SCENE%" --actions "%~2" --frames 40 --screenshot "%OUT%\%~1.ppm" ^
+"%EXE%" "%SCENE%" --no-shell --actions "%~2" --frames 40 --screenshot "%OUT%\%~1.ppm" ^
     >"%OUT%\%~1.log" 2>&1
 if errorlevel 1 (
     echo       FAILED: the run did not finish - see %OUT%\%~1.log

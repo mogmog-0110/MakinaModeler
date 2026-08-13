@@ -33,7 +33,12 @@
 #include <makina/Transform.hpp>
 #include <makina/ViewState.hpp>
 
+#include "cef_overlay.hpp"
+
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <mutex>
 
 #include <cstdio>
 #include <cstdlib>
@@ -293,6 +298,7 @@ int main(int argc, char** argv) {
     // picture. "The image changed" only says something changed.
     std::string savePath;
     std::string statePath;
+    bool noShell = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keymap" && i + 1 < argc) {
@@ -339,6 +345,12 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--save" && i + 1 < argc) {
             savePath = argv[++i];
+        } else if (a == "--no-shell") {
+            // Starting a browser costs about a second and the scripted checks do sixteen runs.
+            // It is a flag rather than something inferred from --keys, because a check that
+            // quietly runs a different program from the one shipped is how a whole class of
+            // this project's mistakes began -- so the difference is spelled out at the call.
+            noShell = true;
         } else if (a == "--dump-state" && i + 1 < argc) {
             // What the shell would be reading. The bridge that pushes it does not exist yet, so
             // this is the seam where it will attach -- and until then the only way to check that
@@ -353,7 +365,8 @@ int main(int argc, char** argv) {
                      "usage: makina_viewport <scene.makina.json> [--keymap maya|blender]\n"
                      "       [--frames N] [--screenshot <path>]\n"
                      "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n"
-                     "       [--actions \"view.front view.genuine\"] [--dump-state <path>]\n");
+                     "       [--actions \"view.front view.genuine\"] [--dump-state <path>]\n"
+                     "       [--no-shell]\n");
         return 2;
     }
 
@@ -548,6 +561,34 @@ int main(int argc, char** argv) {
 
         makina::Camera camera;
         camera = makina::frameBox(camera, bounds.box, 1280.0 / 720.0);
+
+        // The panels. Everything it needs is already here -- the device, the queue, and a place
+        // to send what the user clicks -- so it starts where those are, not in the frame loop.
+        //
+        // The actions it accepts are the keymap's own, so a button and a key reach the same
+        // branch below. `pendingAction` is how: the handler runs on CEF's thread, and touching
+        // the tree from there would edit it while the frame that draws it is being recorded.
+        app::Shell shell;
+        std::string pendingAction;
+        std::string pendingPayload;
+        std::mutex  pendingMutex;
+        if (!noShell) {
+            std::string exeDir = ".";
+            char buf[MAX_PATH] = {};
+            if (::GetModuleFileNameA(nullptr, buf, MAX_PATH) != 0) {
+                exeDir = std::filesystem::path(buf).parent_path().string();
+                std::replace(exeDir.begin(), exeDir.end(), '\\', '/');
+            }
+            shell.start(dev.device(), dev.queue(), exeDir, 1280, 720,
+                        [&](const std::string& name, const std::string& payload) {
+                            std::lock_guard<std::mutex> lock(pendingMutex);
+                            pendingAction = name;
+                            pendingPayload = payload;
+                        });
+            for (const std::string& action : makina::knownActions()) {
+                shell.accept(action);
+            }
+        }
         // The camera from before the first axis snap, so "Genuine" has something to return
         // to. Written only when leaving the free camera, not every frame: while onAxis is
         // false the two would be the same, and copying them anyway invites one of the pair
@@ -586,6 +627,9 @@ int main(int argc, char** argv) {
         double lastFrameMs = 0.0;
         while (window.alive()) {
             const auto frameStart = std::chrono::steady_clock::now();
+            // Before the frame's input is read, so a page repaint lands in this frame's picture
+            // rather than the next one.
+            shell.pump();
             app::FrameInput in = window.pump();
             int scriptedMods = makina::mods::kNone;
             if (scriptAt < scriptedKeys.size()) {
@@ -605,6 +649,18 @@ int main(int argc, char** argv) {
             }
             if (window.consumeResize()) {
                 dev.resize(in.width, in.height);
+                shell.resize(in.width, in.height);
+            }
+
+            // What the page clicked, taken on this thread. The marker is the same one --actions
+            // uses, so a button, a scripted action and a key all arrive at one branch.
+            {
+                std::lock_guard<std::mutex> lock(pendingMutex);
+                if (!pendingAction.empty()) {
+                    in.keysPressed.push_back("@" + pendingAction);
+                    pendingAction.clear();
+                    pendingPayload.clear();
+                }
             }
             const double aspect = in.aspect();
 
@@ -1105,6 +1161,20 @@ int main(int argc, char** argv) {
             if (previewing || !prog.nodes.empty()) {
                 cl->DrawInstanced(3, 1, 0, 0);
             }
+            // The panels, over the picture and into the same command list, so the back buffer is
+            // written once and end() keeps its single transition to PRESENT.
+            shell.record(dev.list(), dev.backBufferRtv(), in.width, in.height);
+
+            // And the state behind them. Built from the tree as it stands after this frame's
+            // edits, which is the tree the picture above was drawn from.
+            {
+                makina::ViewNumbers numbers;
+                numbers.distance = camera.distance;
+                numbers.frameMs = lastFrameMs;
+                numbers.live = transform.active() ? transform.status() : std::string();
+                shell.publish(makina::viewState(history.current(), selection, numbers));
+            }
+
             dev.end();
 
             lastFrameMs = std::chrono::duration<double, std::milli>(
