@@ -179,6 +179,14 @@ void boundaries() {
     refuses("sphere{<0,0,0>,-1}", "positive radius");
     refuses("plane{<0,0,0>,0}", "a direction");
     refuses("disc{<0,0,0>,<0,0,0>,1}", "a direction");
+
+    // Shapes POV can trace and this model cannot hold. The message has to name the shape: the
+    // word would otherwise reach the expression parser and be reported as not being a number,
+    // which says where the parser was rather than what the file asked for.
+    refuses("#declare S = sor { 3, <0,0>,<1,1>,<0,2> }", "revolved about an axis");
+    refuses("union{ blob { sphere{<0,0,0>,1,1} } }", "blended spheres");
+    refuses("isosurface { function { x*x } }", "given by a function");
+    refuses("sphere{<0,0,0>,rand(R)}", "is a function call");
     refuses("box{<0,0,0>,<1,1,1> scale <0,1,1>}", "collapses");
     refuses("object{Nope}", "not a declared object");
     refuses("union{sphere{<0,0,0>,1}", "not closed");

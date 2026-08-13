@@ -192,6 +192,14 @@ private:
             if (m_vectors.count(name) > 0) {
                 refuse("'" + name + "' is a vector and a number is needed here");
             }
+            if (isPunct('(', 1)) {
+                // POV has a function library, and some of it -- rand and seed above all -- can
+                // only be matched by running POV's own generator. Naming it as a call rather than
+                // as an unknown value is the difference between "this file uses something out of
+                // scope" and "this reader is broken".
+                refuse("'" + name + "' is a function call, and this reader evaluates none: POV's "
+                       "functions would each have to produce the same values POV does");
+            }
             refuse("'" + name + "' is not a value this reader knows");
         }
         refuse("expected a number but found '" + peek().text + "'");
@@ -361,6 +369,7 @@ private:
                 root.children.push_back(readObject());
                 return;
             }
+            refuseUnsupportedShape();
             const std::string& w = t.text;
             if (w == "global_settings" || w == "camera" || w == "light_source" ||
                 w == "background" || w == "sky_sphere" || w == "fog") {
@@ -375,6 +384,52 @@ private:
         }
 
         refuse("unexpected '" + t.text + "'");
+    }
+
+    /// POV shapes this model has no form for, named so the refusal says something useful.
+    ///
+    /// Without this the word falls through to the expression parser and comes back as "'sor' is
+    /// not a value this reader knows", which is true and useless -- it describes where the parser
+    /// happened to be rather than what the file asked for. Each of these is a real shape POV can
+    /// trace and this model cannot hold: splines revolved or extruded, implicit surfaces, meshes.
+    /// Approximating one with stacked cones would be the silent difference this reader exists to
+    /// refuse.
+    static const char* unsupportedShape(const std::string& w) {
+        struct Entry { const char* name; const char* why; };
+        static const Entry kShapes[] = {
+            {"sor",            "a spline revolved about an axis"},
+            {"lathe",          "a spline revolved about an axis"},
+            {"prism",          "a spline swept along an axis"},
+            {"blob",           "a field of blended spheres"},
+            {"sphere_sweep",   "a sphere dragged along a spline"},
+            {"superellipsoid", "an implicit surface with two exponents"},
+            {"isosurface",     "an implicit surface given by a function"},
+            {"parametric",     "a surface given by two parameters"},
+            {"height_field",   "a surface read from an image"},
+            {"julia_fractal",  "a fractal"},
+            {"mesh",           "a triangle mesh"},
+            {"mesh2",          "a triangle mesh"},
+            {"polygon",        "a flat outline with any number of sides"},
+            {"text",           "glyphs from a font"},
+            {"bicubic_patch",  "a bicubic patch"},
+        };
+        for (const Entry& e : kShapes) {
+            if (w == e.name) {
+                return e.why;
+            }
+        }
+        return nullptr;
+    }
+
+    /// Stops on a shape this model cannot hold, saying what it is.
+    void refuseUnsupportedShape() {
+        const std::string w = peek().text;
+        const char* why = unsupportedShape(w);
+        if (why != nullptr) {
+            refuse("'" + w + "' is " + std::string(why) +
+                   ", which this model has no form for; approximating it would give a scene that "
+                   "renders and is not the one in the file");
+        }
     }
 
     bool isObjectStart() const {
@@ -396,6 +451,7 @@ private:
         }
         const std::string name = take().text;
         expectPunct('=');
+        refuseUnsupportedShape();
 
         if (isWord("texture") || isWord("pigment") || isWord("finish") || isWord("normal")) {
             m_textures[name] = readAppearance();
@@ -813,6 +869,7 @@ private:
             if (peek().kind == PovTokenKind::End) {
                 refuse("a " + kind + " block was not closed");
             }
+            refuseUnsupportedShape();
             if (!isObjectStart()) {
                 break;
             }
