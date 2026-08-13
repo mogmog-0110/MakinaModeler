@@ -94,16 +94,22 @@ public:
     /// the viewport does not implement is silent here instead of reaching a handler that shrugs.
     /// shell_audit.py already refuses a page naming an action the keymap does not know; this is
     /// the same rule enforced where the message actually arrives.
+    ///
+    /// On the store, not on the context. `data-m-action` goes through `mitiru.dispatch`, which
+    /// sends one cefQuery called `state.dispatch` carrying `{action, payload}` -- the action name
+    /// is inside the message, not the name of the message. Registering a cefQuery handler called
+    /// `edit.toggleMute` therefore waits for something the page never sends, and the button looks
+    /// dead while everything else about it works.
     void accept(const std::string& name) {
 #if defined(MITIRU_HAS_CEF)
-        if (!m_running) {
+        if (!m_running || !m_store) {
             return;
         }
-        m_ctx.registerHandler(name, [this, name](std::string_view payload) {
+        m_store->onAction(name, [this, name](const mitiru::cef::json& payload) {
             if (m_onAction) {
-                m_onAction(name, std::string(payload));
+                m_onAction(name, payload.dump());
             }
-            return std::string("{}");
+            return mitiru::cef::json::object();
         });
 #else
         (void)name;

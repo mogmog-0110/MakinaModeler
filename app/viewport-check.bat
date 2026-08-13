@@ -171,6 +171,23 @@ echo    shell
     >"%OUT%\dressed.log" 2>&1
 call :diffPic bare dressed "the shell has to reach the back buffer"
 
+REM A button on the page, all the way to the tree.
+REM
+REM This is the claim Phase 3 makes and the only one none of the cases above can reach: --keys
+REM goes through the keymap and --actions skips the page entirely, so neither says whether the
+REM toolbar is wired to anything. The click is played into the same pointer path a hand uses.
+REM
+REM (478,15) is the mute button. Mute rather than delete because it asks no question -- delete
+REM carries data-m-confirm and would need a second click on a modal -- and because the node stays
+REM in the tree afterwards, so a passing run is one where something changed and nothing vanished.
+echo    button
+"%EXE%" "%SCENE%" --no-shell --select "13,15" --frames 150 --save "%OUT%\noclick.json" ^
+    >"%OUT%\noclick.log" 2>&1
+"%EXE%" "%SCENE%" --select "13,15" --frames 150 --click "478,15" --save "%OUT%\clickmute.json" ^
+    >"%OUT%\clickmute.log" 2>&1
+call :diffAs clickmute noclick "the toolbar button has to reach the tree"
+call :present clickmute 13 "muting must not remove the node"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -266,6 +283,26 @@ if not exist "%OUT%\%~1.json" (
 fc /b "%OUT%\base.json" "%OUT%\%~1.json" >nul 2>&1
 if errorlevel 1 (
     echo       FAILED [%~1]: %~2
+    set FAILED=1
+)
+exit /b 0
+
+REM The other direction: two saves that must NOT match. A check that compares things which are
+REM equal for the wrong reason passes just as quietly as one that works.
+:diffAs
+if not exist "%OUT%\%~1.json" (
+    echo       FAILED [%~1]: nothing was saved
+    set FAILED=1
+    exit /b 0
+)
+if not exist "%OUT%\%~2.json" (
+    echo       FAILED [%~2]: nothing was saved
+    set FAILED=1
+    exit /b 0
+)
+fc /b "%OUT%\%~1.json" "%OUT%\%~2.json" >nul 2>&1
+if not errorlevel 1 (
+    echo       FAILED [%~1]: %~3
     set FAILED=1
 )
 exit /b 0
