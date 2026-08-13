@@ -65,6 +65,12 @@ using Action = std::string;
 ///
 /// Listed so a keymap file can be checked when it loads rather than when a user presses the key
 /// and nothing happens. A binding to an unknown action is a typo every time.
+///
+/// The list has to mean what it says, which is what keymap_audit.cpp holds it to: every name here
+/// must appear in the viewport that carries them out. `select.add` was in it for a while and the
+/// viewport never named it, so Shift and a click did nothing at all -- not even the plain pick,
+/// because the event resolved to an action no branch claimed. It comes back with multi-selection
+/// (PLAN.md 3.C) rather than sitting here as a promise.
 inline const std::vector<std::string>& knownActions() {
     static const std::vector<std::string> kActions = {
         "view.orbit",      "view.pan",         "view.dolly",
@@ -72,7 +78,7 @@ inline const std::vector<std::string>& knownActions() {
         "view.front",      "view.right",       "view.top",
         "view.back",       "view.left",        "view.bottom",
         "view.toggleOrthographic",
-        "select.pick",     "select.add",       "select.descend",  "select.clear",
+        "select.pick",     "select.descend",   "select.clear",
         "edit.move",       "edit.rotate",      "edit.scale",
         "edit.duplicate",  "edit.delete",
         "edit.undo",       "edit.redo",
@@ -279,7 +285,6 @@ inline const char* mayaKeymapJson() {
     { "action": "view.dolly",  "button": "right",  "drag": true, "modifiers": ["alt"] },
 
     { "action": "select.pick",    "button": "left", "drag": false },
-    { "action": "select.add",     "button": "left", "drag": false, "modifiers": ["shift"] },
     { "action": "select.descend", "button": "left", "drag": false, "modifiers": ["ctrl"] },
 
     { "action": "view.fitSelected", "key": "F" },
@@ -313,7 +318,6 @@ inline const char* blenderKeymapJson() {
     { "action": "view.dolly", "button": "middle", "drag": true, "modifiers": ["ctrl"] },
 
     { "action": "select.pick",    "button": "left", "drag": false },
-    { "action": "select.add",     "button": "left", "drag": false, "modifiers": ["shift"] },
     { "action": "select.descend", "button": "left", "drag": false, "modifiers": ["alt"] },
 
     { "action": "view.fitSelected", "key": "NUMPADPERIOD" },

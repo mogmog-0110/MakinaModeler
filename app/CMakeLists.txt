@@ -35,6 +35,21 @@ if(MSVC)
         /external:W0)
 endif()
 
+# ---------------------------------------------------------------- keymap audit
+
+# Reads the viewport back and holds the keymap to its own claim. Not linked against the viewport
+# -- the viewport is a windowed program and the question here is only about its source text.
+add_executable(keymap_audit keymap_audit.cpp)
+target_include_directories(keymap_audit PRIVATE
+    "${MAKINA_CORE_DIR}/include"
+    "${MAKINA_CORE_DIR}/external")
+if(MSVC)
+    target_compile_options(keymap_audit PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(keymap_audit PRIVATE
+        "SHELL:/external:I ${MAKINA_CORE_DIR}/external"
+        /external:W0)
+endif()
+
 # ---------------------------------------------------------------- viewport
 
 # The interactive viewport: a window, a swap chain and the same generated shader the offscreen

@@ -24,6 +24,9 @@ if errorlevel 1 exit /b 1
 "%CMAKE%" --build "%BUILD_DIR%" --target makina_viewport
 if errorlevel 1 exit /b 1
 
+"%CMAKE%" --build "%BUILD_DIR%" --target keymap_audit
+if errorlevel 1 exit /b 1
+
 echo.
 echo Built: %BUILD_DIR%\bin\makina_viewport.exe
 echo Run:   %BUILD_DIR%\bin\makina_viewport.exe ..\tools\gsf2json\out\hero_flange.makina.json

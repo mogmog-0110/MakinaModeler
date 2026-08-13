@@ -273,6 +273,23 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        // Which modifier holds the snap on, taken from the keymap rather than assumed.
+        //
+        // Only a modifier: snapping is held down through a drag, and the input this app reads
+        // reports Shift, Control and Alt as held state and every other key as a press. A binding
+        // to anything else is refused here rather than silently never firing.
+        int snapModifier = 0;
+        for (const makina::InputEvent& e : keymap.bindingsFor("snap.hold")) {
+            if (e.key == "SHIFT")        { snapModifier |= makina::mods::kShift; }
+            else if (e.key == "CONTROL") { snapModifier |= makina::mods::kCtrl; }
+            else if (e.key == "ALT")     { snapModifier |= makina::mods::kAlt; }
+            else {
+                std::fprintf(stderr, "error: snap.hold is bound to '%s'; this build can only hold "
+                                     "it on SHIFT, CONTROL or ALT\n", e.key.c_str());
+                return 1;
+            }
+        }
+
         app::Window window(L"Makina viewport", 1280, 720);
         app::SwapchainDevice dev(window.handle(), 1280, 720);
         std::wprintf(L"adapter    : %ls\n", dev.adapterName().c_str());
@@ -559,7 +576,11 @@ int main(int argc, char** argv) {
             const bool wasTransforming = transform.active();
             previewing = false;
             if (transform.active()) {
-                transform.setSnap(live && in.ctrl);
+                // Through the keymap rather than off in.ctrl. Reading the modifier directly made
+                // the "snap.hold" binding decorative: moving it to another key in a keymap file
+                // changed nothing, and the app would have gone on snapping with Control while
+                // claiming otherwise.
+                transform.setSnap(live && (modifiers & snapModifier) != 0);
                 if (in.dx != 0.0 || in.dy != 0.0) {
                     // One screen width is one unit for a move, ninety degrees for a rotate.
                     const double gain = transform.kind() == makina::TransformKind::Rotate ? 90.0

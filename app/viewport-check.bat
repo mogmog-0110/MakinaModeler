@@ -22,6 +22,13 @@ if not exist "%EXE%" (
     echo    ERROR: %EXE% is missing. Run app\build-viewport.bat first.
     exit /b 1
 )
+
+REM The keymap before the keys. Every action the build says it knows has to reach the
+REM viewport, or a scripted key below could "pass" by doing nothing at all -- which is how
+REM Shift and a click came to do nothing for as long as they did.
+"%HERE%build\bin\keymap_audit.exe" "%HERE%viewport\main.cpp"
+if errorlevel 1 set FAILED=1
+echo.
 if not exist "%OUT%" mkdir "%OUT%"
 REM Last run's saves are deleted first. A run that dies before writing would otherwise be compared
 REM against its own previous output, and every check would pass on a program that did nothing.
