@@ -78,6 +78,15 @@ inline const std::vector<std::string>& knownActions() {
         "view.front",      "view.right",       "view.top",
         "view.back",       "view.left",        "view.bottom",
         "view.toggleOrthographic",
+        // The camera as it was before an axis view took it over. Grasp3D keeps its
+        // interactive camera apart from the X/Y/Z-direction ones and its toolbar goes back
+        // to it; here lookAlong() overwrites yaw and pitch, so a view someone spent a
+        // minute framing is gone the moment they glance down an axis.
+        //
+        // No preset binds it. It is a toolbar control in Grasp3D and inventing a keystroke
+        // for it would be inventing one neither Maya nor Blender users have -- keymap_audit
+        // takes the shell as a third source for exactly this case.
+        "view.genuine",
         "select.pick",     "select.add",       "select.descend",  "select.clear",
         "select.box",
         "edit.move",       "edit.rotate",      "edit.scale",

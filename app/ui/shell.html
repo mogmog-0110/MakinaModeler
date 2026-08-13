@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Makina</title>
+<!--
+  Phase 3.5 のシェル。Grasp3D の窓の配置をそのまま持ってきている。
+
+  なぜ寄せるのか: これは Grasp3D の移植であり、元を使っていた人が最初の 10 秒で迷わないことに
+  価値がある。並びを「良くする」のは、その人たちが覚えている手の動きを捨てることでもある。
+  ツールバーの順序は GRASP_MAIN.getTbarTool() のままで、区切りの位置まで同じ:
+
+      球 箱 平面 円柱 円錐 トーラス 円板 三角形 | Scale Rotate Translate |
+      Intersection Difference Merge | Remove | カメラ + 距離 | Export
+
+  カメラの選択肢も元のまま (Genuine / X- / Y- / Z-direction、getJComboBoxCamera())。
+  Genuine は「軸方向を覗く前のカメラ」で、Makina にはこれを移すまで無かった。
+
+  中央は**開けてある**。エンジンの HTML はゲームの上に重なるオーバーレイで、
+  背景を透明にすると下の C++ の描画が透ける (examples/hello_preview/assets/scene.html)。
+  ビューポートはそこに出るので、この文書は周りの枠だけを描く。
+  `pointer-events: none` を body に置き、部品にだけ `auto` を戻すのはそのため —
+  中央でのドラッグはオービットとしてゲーム側へ素通しする必要がある。
+
+  JS は書かない — 末尾で読んでいる二つはエンジンの束縛器そのもので、自分の手で書く JS が
+  無いという意味である。値は data-m-text で C++ から受け、操作は data-m-action で C++ へ送る。
+  木は data-m-repeat と <template> で展開する。状態を JS 側に持たないのは Phase 3 の
+  完了条件そのもの (ツリーの正は GameMemory のみ)。
+
+  束縛器は知らない属性も解けない path も黙って捨てるので、綴りを一つ間違えた行は
+  エラーも出さずにただ何もしない。最初に書いたときは木もプロパティも一つも束縛できて
+  いなかった。tools/shell_audit.py が verify-all の中でそれを見ている。
+
+  アイコンの出どころは二つある。プリミティブとブーリアンは Grasp3D 自身のもの
+  (assets/icons/grasp3d、<img> で読む)。Grasp3D はそれ以外に Sun の Java Look and Feel
+  Graphics Repository を使っていたが、あれは Grasp3D のものではないので、汎用の操作は
+  Lucide に差し替えてある。
+
+  Lucide のほうは <svg> のパスを**この文書に直接書いている**ので、表示義務はここで果たす:
+
+      Lucide icons -- ISC License. Copyright (c) 2026 Lucide Icons and Contributors.
+      Full text: assets/icons/lucide/LICENSE.txt (元の .svg も同じ場所に置いてある)
+-->
+<style>
+  :root {
+    --bar:      #eceef2;
+    --panel:    #f4f5f8;
+    --line:     #c2c8d4;
+    --ink:      #1d232e;
+    --ink-dim:  #5c667a;
+    --sel:      #2f6df0;
+    --sel-soft: #dbe6fd;
+  }
+
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: transparent;
+    /* クリックはゲームへ素通し。中央でオービットできることが最優先 (PLAN 3.A)。 */
+    pointer-events: none;
+    user-select: none;
+    font: 12px/1.5 "Segoe UI", "Meiryo", "Yu Gothic UI", system-ui, sans-serif;
+    color: var(--ink);
+  }
+  button, input, select, label, .panel, .bar, .status { pointer-events: auto; }
+
+  .frame {
+    position: absolute; inset: 0;
+    display: grid;
+    grid-template-rows: 30px 1fr 22px;
+    grid-template-columns: 240px 1fr 260px;
+    grid-template-areas:
+      "bar  bar   bar"
+      "tree view  prop"
+      "stat stat  stat";
+  }
+
+  /* ---------------------------------------------------------------- toolbar */
+  .bar {
+    grid-area: bar;
+    display: flex; align-items: center; gap: 2px;
+    padding: 0 4px;
+    background: var(--bar);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar button {
+    width: 26px; height: 24px;
+    display: grid; place-items: center;
+    background: transparent; border: 1px solid transparent; border-radius: 3px;
+    cursor: pointer;
+  }
+  .bar button:hover  { background: #ffffff; border-color: var(--line); }
+  .bar button:active { background: var(--sel-soft); }
+  .bar img, .bar svg { width: 16px; height: 16px; display: block; }
+  .bar svg { stroke: #33415c; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .sep { width: 1px; height: 18px; margin: 0 5px; background: var(--line); }
+  .grow { flex: 1; }
+
+  .bar select, .bar input[type=text] {
+    height: 20px; font: inherit;
+    border: 1px solid var(--line); border-radius: 3px; background: #fff;
+    padding: 0 4px;
+  }
+  .bar input[type=text] { width: 56px; text-align: right; }
+  .bar label { color: var(--ink-dim); margin-left: 6px; }
+
+  /* ------------------------------------------------------------------ tree */
+  .tree {
+    grid-area: tree;
+    background: var(--panel); border-right: 1px solid var(--line);
+    overflow: auto;
+  }
+  .tree h2, .prop h2 {
+    margin: 0; padding: 5px 8px;
+    font-size: 11px; font-weight: 600; color: var(--ink-dim);
+    background: var(--bar); border-bottom: 1px solid var(--line);
+  }
+  .node {
+    display: flex; align-items: center; gap: 5px;
+    padding: 2px 8px; cursor: default; white-space: nowrap;
+  }
+  .node:hover { background: #e7ebf3; }
+  .node.is-selected { background: var(--sel-soft); }
+  /* ミュートは削除ではない。木には残り、立体から出ているだけなので、消さずに薄くする。 */
+  .node.is-muted { opacity: .45; font-style: italic; }
+  .node img { width: 16px; height: 16px; }
+  .node .op { color: var(--ink-dim); }
+
+  /* ------------------------------------------------------------ properties */
+  .prop {
+    grid-area: prop;
+    background: var(--panel); border-left: 1px solid var(--line);
+    overflow: auto;
+  }
+  .row {
+    display: grid; grid-template-columns: 84px 1fr;
+    align-items: center; gap: 6px; padding: 3px 8px;
+  }
+  .row span { color: var(--ink-dim); }
+  .row input {
+    height: 20px; font: inherit; text-align: right;
+    border: 1px solid var(--line); border-radius: 3px; background: #fff; padding: 0 4px;
+  }
+
+  /* ---------------------------------------------------------------- status */
+  .status {
+    grid-area: stat;
+    display: flex; align-items: center; gap: 14px; padding: 0 8px;
+    background: var(--bar); border-top: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  /* ドラッグ中の操作と数値。Blender 流に、手を止めずに読める場所へ出す (PLAN 3.B)。 */
+  .status .live { color: var(--ink); font-weight: 600; }
+
+  .view { grid-area: view; }   /* 何も描かない。ここは C++ の絵が出る穴である。 */
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="bar">
+    <!-- プリミティブ。Grasp3D に sphere16.gif が無いので、球だけ Lucide の circle を使う。 -->
+    <button data-m-action="add.sphere"   title="球を足す">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></button>
+    <button data-m-action="add.box"      title="箱を足す"><img src="assets/icons/grasp3d/box16.gif" alt=""></button>
+    <button data-m-action="add.plane"    title="平面を足す"><img src="assets/icons/grasp3d/plane16.gif" alt=""></button>
+    <button data-m-action="add.cylinder" title="円柱を足す"><img src="assets/icons/grasp3d/cylinder16.gif" alt=""></button>
+    <button data-m-action="add.cone"     title="円錐を足す"><img src="assets/icons/grasp3d/cone16.gif" alt=""></button>
+    <button data-m-action="add.torus"    title="トーラスを足す"><img src="assets/icons/grasp3d/torus16.gif" alt=""></button>
+    <button data-m-action="add.disc"     title="円板を足す"><img src="assets/icons/grasp3d/disc16.gif" alt=""></button>
+    <button data-m-action="add.triangle" title="三角形を足す"><img src="assets/icons/grasp3d/triangle16.gif" alt=""></button>
+
+    <span class="sep"></span>
+
+    <button data-m-action="add.scale"     title="Scale を足す">
+      <svg viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M9 21H3v-6M3 21l7-7"/></svg></button>
+    <button data-m-action="add.rotate"    title="Rotate を足す">
+      <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+    <button data-m-action="add.translate" title="Translate を足す">
+      <svg viewBox="0 0 24 24"><path d="M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg></button>
+
+    <span class="sep"></span>
+
+    <button data-m-action="add.intersection" title="Intersection を足す"><img src="assets/icons/grasp3d/intersection16.gif" alt=""></button>
+    <button data-m-action="add.difference"   title="Difference を足す"><img src="assets/icons/grasp3d/difference16.gif" alt=""></button>
+    <button data-m-action="add.merge"        title="Merge を足す"><img src="assets/icons/grasp3d/merge16.gif" alt=""></button>
+
+    <span class="sep"></span>
+
+    <button data-m-action="edit.delete" title="選択を削除"
+            data-m-confirm-title="削除" data-m-confirm="選択した立体を削除しますか">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button>
+    <!-- ミュートは削除の隣。木から消えないので、目のアイコンのほうが意味に近い。 -->
+    <button data-m-action="edit.toggleMute" title="選択を立体から外す / 戻す">
+      <svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+
+    <span class="sep"></span>
+
+    <!-- Grasp3D の getJComboBoxCamera() と同じ四つ。value が行動名そのものなので、
+         ここに増やせるのはビューポートが実行できるカメラだけになる。 -->
+    <select data-m-action="shell.setCamera" title="カメラ">
+      <option value="view.genuine">Genuine</option>
+      <option value="view.right">X-direction</option>
+      <option value="view.top">Y-direction</option>
+      <option value="view.front">Z-direction</option>
+    </select>
+    <label for="dist">距離</label>
+    <input id="dist" type="text" data-m-input="view.distance" data-m-value="view.distance">
+
+    <span class="grow"></span>
+
+    <button data-m-action="edit.undo" title="元に戻す">
+      <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12H9"/></svg></button>
+    <button data-m-action="edit.redo" title="やり直す">
+      <svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h5"/></svg></button>
+    <span class="sep"></span>
+    <button data-m-action="file.save" title="保存">
+      <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></button>
+    <button data-m-action="file.export" title="書き出す (POV-Ray / STL / OBJ)">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg></button>
+  </div>
+
+  <div class="tree">
+    <h2>ツリー</h2>
+    <!-- 正は GameMemory 側の木で、ここは写しである。だから展開もフィルタも C++ が決めた
+         並びをそのまま出すだけにしてある。 -->
+    <div data-m-repeat="view.tree">
+      <template>
+        <div class="node"
+             data-m-class="is-selected: selected; is-muted: muted"
+             data-m-action="select.pick" data-m-arg="id"
+             data-m-style="padding-left: {indent}px">
+          <img data-m-attr="src: {icon}" alt="">
+          <span data-m-text="name"></span>
+          <span class="op" data-m-text="op"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div class="view"></div>
+
+  <div class="prop">
+    <h2 data-m-text="view.selection.title">プロパティ</h2>
+    <!-- パラメータ名は op ごとに違うので、行そのものを C++ が並べる。
+         ここで op を判定して分岐すると、Op.hpp の表と二重管理になる。 -->
+    <div data-m-repeat="view.selection.fields">
+      <template>
+        <div class="row">
+          <span data-m-text="label"></span>
+          <input type="text" data-m-input="" data-m-attr="data-m-input: {key}"
+                 data-m-value="value">
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div class="status">
+    <span data-m-text="view.status.nodes">0 nodes</span>
+    <span data-m-text="view.status.selection"></span>
+    <!-- 変形中の「Move Y: 3 (typed)」がここに出る。Transform.hpp の status() がそのまま入る。 -->
+    <span class="live" data-m-text="view.status.live"></span>
+    <span class="grow"></span>
+    <span data-m-text="view.status.frame"></span>
+  </div>
+
+</div>
+
+<script src="mitiru_runtime/mitiru_cef_state.js"></script>
+<script src="mitiru_runtime/mitiru_bind.js"></script>
+</body>
+</html>

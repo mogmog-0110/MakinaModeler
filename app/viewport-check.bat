@@ -26,7 +26,7 @@ if not exist "%EXE%" (
 REM The keymap before the keys. Every action the build says it knows has to reach the
 REM viewport, or a scripted key below could "pass" by doing nothing at all -- which is how
 REM Shift and a click came to do nothing for as long as they did.
-"%HERE%build\bin\keymap_audit.exe" "%HERE%viewport\main.cpp" "%HERE%..\makina-core\include\makina\Command.hpp"
+"%HERE%build\bin\keymap_audit.exe" "%HERE%viewport\main.cpp" "%HERE%..\makina-core\include\makina\Command.hpp" "%HERE%ui\shell.html"
 if errorlevel 1 set FAILED=1
 echo.
 if not exist "%OUT%" mkdir "%OUT%"
@@ -118,6 +118,21 @@ call :shot during 4 "W Y 3"
 call :shot after  4 "W Y 3 ENTER"
 call :samePic during after "the drag preview must match the committed picture"
 
+REM The camera. Grasp3D keeps its interactive camera apart from the X/Y/Z-direction views and
+REM its toolbar returns to it; here lookAlong() overwrites yaw and pitch, so without somewhere to
+REM put the old one a glance down an axis loses the view the user framed.
+REM
+REM Three pictures rather than two, because "genuine came back" is only worth anything if the
+REM axis view went somewhere first. If snapping to Front drew the same picture as the start, the
+REM restore below would pass while doing nothing at all -- so `moved` is the control that has to
+REM fail for the check to mean something, and it is asserted rather than assumed.
+echo    camera
+call :actshot camstart ""
+call :actshot camfront "view.front"
+call :actshot camback  "view.front view.genuine"
+call :diffPic camstart camfront "snapping to the front view must move the camera"
+call :samePic camstart camback  "Genuine must come back to the camera the axis view took over"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -141,6 +156,33 @@ REM Like :run, but keeps the frame instead of the tree.
     >"%OUT%\%~1.log" 2>&1
 if errorlevel 1 (
     echo       FAILED: the run did not finish - see %OUT%\%~1.log
+    set FAILED=1
+)
+exit /b 0
+
+REM Like :shot, but driven by action names instead of keys. view.genuine has no binding in
+REM either preset -- it is a toolbar control in Grasp3D and neither Maya nor Blender has the
+REM concept -- so there is no key to press for it.
+:actshot
+"%EXE%" "%SCENE%" --actions "%~2" --frames 40 --screenshot "%OUT%\%~1.ppm" ^
+    >"%OUT%\%~1.log" 2>&1
+if errorlevel 1 (
+    echo       FAILED: the run did not finish - see %OUT%\%~1.log
+    set FAILED=1
+)
+exit /b 0
+
+REM The other direction: two pictures that must NOT match. Without it a check that compares
+REM identical things passes for the wrong reason.
+:diffPic
+if not exist "%OUT%\%~1.ppm" (
+    echo       FAILED [%~1]: no picture was written
+    set FAILED=1
+    exit /b 0
+)
+fc /b "%OUT%\%~1.ppm" "%OUT%\%~2.ppm" >nul 2>&1
+if not errorlevel 1 (
+    echo       FAILED [%~1]: %~3
     set FAILED=1
 )
 exit /b 0

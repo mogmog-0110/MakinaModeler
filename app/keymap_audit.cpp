@@ -58,14 +58,16 @@ std::string withoutComments(const std::string& src) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::fprintf(stderr,
-                     "usage: keymap_audit <viewport source> <command layer source>\n");
+    if (argc < 4) {
+        std::fprintf(stderr, "usage: keymap_audit <viewport source> <command layer source> "
+                             "<shell html>\n");
         return 2;
     }
 
-    // The viewport comes first and the command layer last, because the two are asked different
-    // questions: whether an action reaches a branch, and whether a command reaches a dispatch.
+    // Three sources, three different questions: whether an action reaches a branch in the
+    // viewport, whether a command reaches a dispatch, and whether the shell offers a button for
+    // the actions no key does. Taken by position rather than by name so the order is the caller's
+    // to state and not this file's to guess.
     std::vector<std::string> sources;
     for (int i = 1; i < argc; ++i) {
         std::ifstream in(argv[i], std::ios::binary);
@@ -77,8 +79,9 @@ int main(int argc, char** argv) {
         buf << in.rdbuf();
         sources.push_back(withoutComments(buf.str()));
     }
-    const std::string code = sources.front();
-    const std::string commands = sources.back();
+    const std::string code = sources[0];
+    const std::string commands = sources[1];
+    const std::string shell = sources[2];
 
     std::printf("every action the keymap knows, carried out by the viewport\n\n");
 
@@ -116,15 +119,21 @@ int main(int argc, char** argv) {
         }
         presets.push_back(std::move(map));
     }
+    //
+    // A button counts as well as a key. `view.genuine` is Grasp3D's camera dropdown and nothing
+    // else -- neither Maya nor Blender has the concept, so demanding a preset binding would be
+    // demanding an invented keystroke. What must hold is that some gesture reaches the action,
+    // not that the gesture is a key.
     for (const std::string& action : makina::knownActions()) {
-        bool reachable = false;
+        bool reachable = shell.find("\"" + action + "\"") != std::string::npos;
         for (const makina::Keymap& map : presets) {
             if (!map.bindingsFor(action).empty()) {
                 reachable = true;
             }
         }
         if (!reachable) {
-            std::printf("    FAIL  no preset binds anything to '%s'\n", action.c_str());
+            std::printf("    FAIL  nothing reaches '%s' -- no preset binds it and the shell has "
+                        "no control for it\n", action.c_str());
             ++missing;
         }
     }

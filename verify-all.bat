@@ -115,6 +115,11 @@ if errorlevel 1 (
 )
 
 echo.
+echo    the shell binds to the same actions, and binds at all
+call "%HERE%app\shell-check.bat"
+if errorlevel 1 set FAILED=1
+
+echo.
 echo ============================================================
 if "%FAILED%"=="0" (
     echo  everything agrees

@@ -7,6 +7,7 @@
 //
 //   makina_viewport <scene.makina.json> [--keymap maya|blender]
 //                   [--frames N] [--screenshot <path>] [--select <id>] [--keys "W X 5 ENTER"]
+//                   [--actions "view.front view.genuine"]
 //
 // Everything the user can do arrives as an action name from the keymap, never as a hard-coded
 // key. That is not indirection for its own sake: Phase 3's exit condition is that someone who uses
@@ -296,6 +297,18 @@ int main(int argc, char** argv) {
             frameLimit = std::atoi(argv[++i]);
         } else if (a == "--screenshot" && i + 1 < argc) {
             screenshot = argv[++i];
+        } else if (a == "--actions" && i + 1 < argc) {
+            // Action names, not keys. The toolbar dispatches "view.genuine"; it does not press
+            // anything, and view.genuine has no binding in either preset because neither Maya
+            // nor Blender has the concept. Without this door it could only be reached by hand.
+            //
+            // They ride the scripted-key queue with a marker in front, so one action a frame and
+            // the same ordering rules as --keys, rather than a second queue that could disagree
+            // with the first about what happened when.
+            std::istringstream names(argv[++i]);
+            for (std::string n; names >> n;) {
+                scriptedKeys.push_back("@" + n);
+            }
         } else if (a == "--keys" && i + 1 < argc) {
             std::istringstream keys(argv[++i]);
             for (std::string k; keys >> k;) {
@@ -330,7 +343,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: makina_viewport <scene.makina.json> [--keymap maya|blender]\n"
                      "       [--frames N] [--screenshot <path>]\n"
-                     "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n");
+                     "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n"
+                     "       [--actions \"view.front view.genuine\"]\n");
         return 2;
     }
 
@@ -525,6 +539,12 @@ int main(int argc, char** argv) {
 
         makina::Camera camera;
         camera = makina::frameBox(camera, bounds.box, 1280.0 / 720.0);
+        // The camera from before the first axis snap, so "Genuine" has something to return
+        // to. Written only when leaving the free camera, not every frame: while onAxis is
+        // false the two would be the same, and copying them anyway invites one of the pair
+        // to be forgotten in a branch added later.
+        makina::Camera genuine = camera;
+        bool onAxis = false;
 
         // A list, not an id, and every edit goes through topLevel() so a solid inside another
         // selected solid is reached once rather than twice.
@@ -607,11 +627,14 @@ int main(int argc, char** argv) {
                         }
                     } else if (action == "view.orbit") {
                         camera = makina::orbit(camera, in.dx, in.dy);
+                        onAxis = false;
                     } else if (action == "view.pan") {
                         // dy is inverted: screen y grows downward, the camera's up does not.
                         camera = makina::pan(camera, in.dx, -in.dy, aspect);
+                        onAxis = false;
                     } else if (action == "view.dolly") {
                         camera = makina::dolly(camera, -in.dy * 20.0, sceneRadius);
+                        onAxis = false;
                     }
                 }
             }
@@ -795,7 +818,8 @@ int main(int argc, char** argv) {
                 makina::InputEvent e;
                 e.key = k;
                 e.modifiers = modifiers;
-                const makina::Action action = keymap.resolve(e);
+                const makina::Action action =
+                    k.rfind('@', 0) == 0 ? k.substr(1) : keymap.resolve(e);
 
                 if (action == "edit.move" || action == "edit.rotate" || action == "edit.scale") {
                     if (selection.empty()) {
@@ -921,27 +945,50 @@ int main(int argc, char** argv) {
                     continue;
                 }
 
+                // Framing is the user placing the camera by hand as much as orbiting is, so
+                // it is the free camera from here on and "Genuine" should come back to it.
                 if (action == "view.fitAll") {
                     camera = makina::frameBox(camera, bounds.box, aspect);
+                    onAxis = false;
                 } else if (action == "view.fitSelected") {
                     // Everything selected, not just the last one picked: fitting to one of five
                     // and calling it "fit selected" would leave the other four off screen.
                     const makina::Aabb box = selectionBox(history.current(), selection, bounds.box);
                     camera = makina::frameBox(camera, box, aspect);
-                } else if (action == "view.front") {
-                    camera = makina::lookAlong(camera, makina::ViewAxis::Front);
-                } else if (action == "view.back") {
-                    camera = makina::lookAlong(camera, makina::ViewAxis::Front, true);
-                } else if (action == "view.right") {
-                    camera = makina::lookAlong(camera, makina::ViewAxis::Right);
-                } else if (action == "view.left") {
-                    camera = makina::lookAlong(camera, makina::ViewAxis::Right, true);
-                } else if (action == "view.top") {
-                    camera = makina::lookAlong(camera, makina::ViewAxis::Top);
-                } else if (action == "view.bottom") {
-                    camera = makina::lookAlong(camera, makina::ViewAxis::Top, true);
+                    onAxis = false;
+                } else if (action == "view.front" || action == "view.back" ||
+                           action == "view.right" || action == "view.left" ||
+                           action == "view.top" || action == "view.bottom") {
+                    // Stashed once. Snapping from Front to Right must not overwrite the
+                    // free camera with the Front one, or "Genuine" returns to a view the
+                    // user never framed.
+                    if (!onAxis) {
+                        genuine = camera;
+                        onAxis = true;
+                    }
+                    if (action == "view.front") {
+                        camera = makina::lookAlong(camera, makina::ViewAxis::Front);
+                    } else if (action == "view.back") {
+                        camera = makina::lookAlong(camera, makina::ViewAxis::Front, true);
+                    } else if (action == "view.right") {
+                        camera = makina::lookAlong(camera, makina::ViewAxis::Right);
+                    } else if (action == "view.left") {
+                        camera = makina::lookAlong(camera, makina::ViewAxis::Right, true);
+                    } else if (action == "view.top") {
+                        camera = makina::lookAlong(camera, makina::ViewAxis::Top);
+                    } else if (action == "view.bottom") {
+                        camera = makina::lookAlong(camera, makina::ViewAxis::Top, true);
+                    }
                 } else if (action == "view.toggleOrthographic") {
+                    // onAxis is left alone. An axis view is usually looked at without
+                    // perspective, so switching projection is part of being there rather
+                    // than a way out of it.
                     camera = makina::setOrthographic(camera, !camera.orthographic);
+                } else if (action == "view.genuine") {
+                    if (onAxis) {
+                        camera = genuine;
+                        onAxis = false;
+                    }
                 } else if (action == "select.clear") {
                     selection.clear();
                 }
