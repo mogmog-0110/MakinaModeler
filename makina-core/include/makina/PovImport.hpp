@@ -496,6 +496,40 @@ private:
         return t;
     }
 
+    /// Turns a subtree built along +Y so that +Y points along `axis`.
+    ///
+    /// Two rotations, Z then Y, which is enough because the object is a solid of revolution about
+    /// the axis -- a third would only spin it about itself. The angles come from the rotation
+    /// matrices in Bounds.hpp rather than from a convention assumed here: a turn of t about Z
+    /// sends (0,1,0) to (-sin t, cos t, 0), and a turn of p about Y then sends that to
+    /// (-sin t cos p, cos t, sin t sin p). Matching that against the wanted axis gives both.
+    static PovNode alignY(PovNode inner, const double axis[3], double len) {
+        const double u[3] = {axis[0] / len, axis[1] / len, axis[2] / len};
+        const double clamped = u[1] > 1.0 ? 1.0 : (u[1] < -1.0 ? -1.0 : u[1]);
+        const double tilt = std::acos(clamped) * 180.0 / 3.14159265358979323846;
+        if (std::fabs(tilt) < 1e-9) {
+            return inner;   // already along +Y
+        }
+        // Straight down is the one case the second angle cannot be recovered from, because the
+        // axis lies on the pole and every spin about Y sends +Y to the same place. Zero is as
+        // good as any other value there, and picking one keeps atan2(0,0) out of the result.
+        const double sinTilt = std::sqrt(1.0 - clamped * clamped);
+        const double spin = sinTilt < 1e-9
+                                ? 0.0
+                                : std::atan2(u[2], -u[0]) * 180.0 / 3.14159265358979323846;
+
+        PovNode z = wrap(std::move(inner), Op::Rotate);
+        z.params[0] = static_cast<float>(tilt);
+        z.flags |= flags::kAxisZ;
+        if (std::fabs(spin) < 1e-9) {
+            return z;
+        }
+        PovNode y = wrap(std::move(z), Op::Rotate);
+        y.params[0] = static_cast<float>(spin);
+        y.flags |= flags::kAxisY;
+        return y;
+    }
+
     PovNode sphere() {
         take();
         expectPunct('{');
@@ -540,20 +574,43 @@ private:
         expectPunct(',');
         const double r = number();
 
-        if (std::fabs(a[0] - b[0]) > 1e-9 || std::fabs(a[2] - b[2]) > 1e-9) {
-            // Only an axis-aligned cylinder maps to this model's cap and base. Straightening a
-            // slanted one would move geometry the file did not ask to move.
-            refuse("this reader takes a cylinder along Y; this one runs between points that "
-                   "differ in x or z");
-        }
         if (r <= 0.0) {
             refuse("a cylinder needs a positive radius");
         }
+        // A cylinder reads the same from either end, so the one that gives an upward axis is
+        // chosen. That is not tidiness: the exporter writes cap before base, so every upright
+        // cylinder would otherwise come back tilted a full half turn -- geometrically right,
+        // two extra nodes, and a round trip exact only to the last few bits of a float.
+        const double* lo = a;
+        const double* hi = b;
+        if (b[1] < a[1]) {
+            lo = b;
+            hi = a;
+        }
+        const double d[3] = {hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]};
+        const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (len < 1e-12) {
+            refuse("a cylinder needs two distinct end points");
+        }
+
+        // Built along +Y from the origin, then turned onto the axis the file gives and moved to
+        // its first end point. The axis-aligned case falls out of the same code with both angles
+        // zero, so there is one path rather than two that have to agree.
         PovNode n = leaf(Op::Cylinder, "Cylinder");
-        n.params[0] = static_cast<float>(a[1] > b[1] ? a[1] : b[1]);
-        n.params[1] = static_cast<float>(a[1] < b[1] ? a[1] : b[1]);
         n.params[2] = static_cast<float>(r);
-        return place(std::move(n), a[0], 0.0, a[2]);
+
+        // An upright cylinder keeps the cap-and-base form this model stores, which is what the
+        // exporter wrote in the first place. Sending it through the general path instead would be
+        // a cylinder from zero to its length under a translate: the same solid, one node more,
+        // and a round trip exact only to the last bits of a float rather than to every bit.
+        if (std::fabs(d[0]) < 1e-9 && std::fabs(d[2]) < 1e-9) {
+            n.params[0] = static_cast<float>(hi[1]);
+            n.params[1] = static_cast<float>(lo[1]);
+            return place(std::move(n), lo[0], 0.0, lo[2]);
+        }
+        n.params[0] = static_cast<float>(len);
+        n.params[1] = 0.0f;
+        return place(alignY(std::move(n), d, len), lo[0], lo[1], lo[2]);
     }
 
     PovNode cone() {
@@ -568,24 +625,29 @@ private:
         expectPunct(',');
         const double rb = number();
 
-        if (std::fabs(a[0] - b[0]) > 1e-9 || std::fabs(a[2] - b[2]) > 1e-9) {
-            refuse("this reader takes a cone along Y");
-        }
         if (ra > 1e-9 && rb > 1e-9) {
             // A truncated cone has two radii; this model's Cone has one and a tip.
             refuse("this reader takes a cone that comes to a point; this one is truncated");
         }
-        const double radius = ra > rb ? ra : rb;
-        const double baseY  = ra > rb ? a[1] : b[1];
-        const double tipY   = ra > rb ? b[1] : a[1];
+        const bool baseFirst = ra > rb;
+        const double radius = baseFirst ? ra : rb;
+        const double* base = baseFirst ? a : b;
+        const double* tip  = baseFirst ? b : a;
+        const double d[3] = {tip[0] - base[0], tip[1] - base[1], tip[2] - base[2]};
+        const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (len < 1e-12) {
+            refuse("a cone needs two distinct end points");
+        }
 
         PovNode n = leaf(Op::Cone, "Cone");
         n.params[0] = static_cast<float>(radius);
-        // Signed, and that matters: a negative height is how this model says the cone points
-        // down, and Flatten.hpp reads it as the sign on y. Taking the magnitude turns every
-        // downward cone upright, which is a scene that loads and is not the one in the file.
-        n.params[1] = static_cast<float>(tipY - baseY);
-        return place(std::move(n), a[0], baseY, a[2]);
+        // The height stays signed even here, where the tilt could carry the direction instead:
+        // an axis-aligned cone that points down has to come back as the negative height this
+        // model uses, or the round trip against the exporter stops being exact.
+        const bool alignedDown = std::fabs(d[0]) < 1e-9 && std::fabs(d[2]) < 1e-9 && d[1] < 0.0;
+        n.params[1] = static_cast<float>(alignedDown ? -len : len);
+        PovNode out = alignedDown ? std::move(n) : alignY(std::move(n), d, len);
+        return place(std::move(out), base[0], base[1], base[2]);
     }
 
     PovNode torus() {

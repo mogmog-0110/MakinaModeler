@@ -174,8 +174,8 @@ void boundaries() {
     std::printf("what the reader will not take\n");
 
     // Geometry this model cannot hold. Each of these would move or reshape the solid if guessed.
-    refuses("cylinder{<0,0,0>,<1,2,0>,0.5}", "along Y");
     refuses("cone{<0,0,0>,1,<0,2,0>,0.5}", "truncated");
+    refuses("cylinder{<1,1,1>,<1,1,1>,0.5}", "distinct end points");
     refuses("plane{<1,0,0>,0}", "+Y");
     refuses("sphere{<0,0,0>,-1}", "positive radius");
     refuses("box{<0,0,0>,<1,1,1> scale <0,1,1>}", "collapses");
@@ -186,6 +186,42 @@ void boundaries() {
     notes("sphere{<0,0,0>,1 normal{bumps 0.1}}", "normal");
     notes("sphere{<0,0,0>,1 no_shadow}", "no_shadow");
     notes("global_settings{ radiosity{} } sphere{<0,0,0>,1}", "global_settings");
+
+    // A cylinder that is not along an axis, checked against where the solid has to be rather than
+    // against the transform the reader built. Stating the expected geometry independently is the
+    // point: the reader and a test that recomputed its own rotation would agree with each other
+    // and both be wrong.
+    try {
+        const makina::PovImportResult r =
+            makina::importPov("cylinder{<-1,0,-1>,<1,2,1>,0.3}");
+        const double from[3] = {-1.0, 0.0, -1.0};
+        const double to[3]   = {1.0, 2.0, 1.0};
+
+        int inside = 0;
+        for (int i = 1; i < 8; ++i) {
+            const double t = i / 8.0;
+            const double p[3] = {from[0] + (to[0] - from[0]) * t,
+                                 from[1] + (to[1] - from[1]) * t,
+                                 from[2] + (to[2] - from[2]) * t};
+            if (makina::eval(r.scene, p) < 0.0) {
+                ++inside;
+            }
+        }
+        check(inside == 7, std::to_string(inside) + " of 7 points on the axis are inside the "
+                           "cylinder; a mis-turned one would miss most of them");
+
+        // Beyond either end, and off to the side: a cylinder that came out longer or fatter than
+        // asked would swallow these.
+        const double past[3] = {1.6, 2.6, 1.6};
+        check(makina::eval(r.scene, past) > 0.0, "a point past the far cap reads as inside");
+        // Perpendicular to the axis, well outside the radius. The axis runs along (2,2,2), so
+        // (1,-1,0) is at right angles to it.
+        const double side[3] = {0.6, -0.6, 0.0};
+        check(makina::eval(r.scene, side) > 0.0,
+              "a point beside the axis, further out than the radius, reads as inside");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("a slanted cylinder was refused: ") + e.what());
+    }
 
     // The whole point of the intermediate tree: an instance carries a transform of its own, and
     // the wrapper is created after the subtree it wraps.
