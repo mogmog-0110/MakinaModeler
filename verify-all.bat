@@ -63,6 +63,12 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    nothing sampled: the wear is still arithmetic on the field
+    echo.
+    call "%HERE%spike\notexture-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    the weathered look, still reading what the scene says
     echo.
     call "%HERE%spike\weathered-check.bat"
