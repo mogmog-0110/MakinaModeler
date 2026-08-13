@@ -56,6 +56,10 @@ target_link_libraries(transform_check PRIVATE makina_core)
 add_executable(material_check tests/material_check.cpp)
 target_link_libraries(material_check PRIVATE makina_core)
 
+# Reading POV back: what the exporter writes, the reader has to take.
+add_executable(pov_import_check tests/pov_import_check.cpp)
+target_link_libraries(pov_import_check PRIVATE makina_core)
+
 # The fourth agreement: the mesh that leaves the project, against the field that stays in it.
 add_executable(mesh_compare tests/mesh_compare.cpp)
 target_link_libraries(mesh_compare PRIVATE makina_core)
@@ -64,13 +68,18 @@ target_link_libraries(mesh_compare PRIVATE makina_core)
 add_executable(makina_mesh tools/makina_mesh.cpp)
 target_link_libraries(makina_mesh PRIVATE makina_core)
 
+# Not a test: reads a POV-Ray file in, and says what it could not take.
+add_executable(makina_povin tools/makina_povin.cpp)
+target_link_libraries(makina_povin PRIVATE makina_core)
+
 # Not a test: the headless command line an agent drives (describe / apply / measure).
 add_executable(makina_edit tools/makina_edit.cpp)
 target_link_libraries(makina_edit PRIVATE makina_core)
 
 foreach(t roundtrip sdf_compare measure_compare pov_compare bsp_compare edit_check command_check
           camera_check pick_check keymap_check transform_check material_check mesh_compare
-          makina_edit makina_mesh)
+          pov_import_check
+          makina_edit makina_mesh makina_povin)
     if(MSVC)
         # /utf-8: sources are UTF-8 but MSVC otherwise assumes the ANSI code page.
         target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
@@ -99,6 +108,7 @@ if(FIXTURE_SCENES)
     add_test(NAME transform_check COMMAND transform_check)
     add_test(NAME material_check COMMAND material_check ${FIXTURE_SCENES})
     add_test(NAME mesh_compare COMMAND mesh_compare ${FIXTURE_SCENES})
+    add_test(NAME pov_import_check COMMAND pov_import_check ${FIXTURE_SCENES})
 else()
     message(WARNING "tests/scenes holds no scenes; ctest will have nothing to run")
 endif()
