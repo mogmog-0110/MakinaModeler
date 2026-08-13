@@ -84,14 +84,24 @@ void mkCameraRay(float2 ndc, out float3 ro, out float3 rd) {
     }
 
     if (gCameraKind == 4u) {
-        // Panoramic: the horizontal axis wraps around the eye as a cylinder while the vertical
-        // stays flat. A single tangent plane cannot do this, which is why a rasteriser needs
-        // several passes for what is one line here.
-        // The vertical is the up vector itself, not a tangent of half the field. POV builds this
-        // ray as a unit horizontal direction plus y times up, so with up<0,1,0> the frame spans
-        // a quarter turn vertically however wide the horizontal angle is.
-        const float yaw = ndc.x * gCameraAngle * 0.5;
-        rd = normalize(gForward * cos(yaw) + gRight * sin(yaw) + gUp * (-ndc.y));
+        // Panoramic: both axes are the angle itself, a quarter turn from the centre to each edge,
+        // and `angle` does not enter at all.
+        //
+        // Measured, not read (spike/pov_camera_probe.py puts one bright marker at a known
+        // direction and reports the pixel it lands on). On a square film POV maps yaw and
+        // elevation to the frame exactly linearly -- 10 degrees to 0.1111, 40 to 0.4444 -- and
+        // renders the identical image for `angle 60`, `angle 90` and `angle 180`. Both earlier
+        // attempts at this camera failed on those two facts: they scaled by an angle POV ignores,
+        // and they made the vertical a tangent when it is the angle.
+        //
+        // A frame that is not square is a different question and is not answered here. POV's
+        // horizontal there is neither this nor this divided by the aspect: it agrees with the
+        // divide near the centre and drifts to 76% away from it by the edge. render_scene.cpp
+        // keeps the comparison square and says so rather than fitting a curve to a table.
+        const float yaw = ndc.x * 1.57079632679489661923;
+        const float pitch = -ndc.y * 1.57079632679489661923;
+        rd = normalize(gForward * (cos(pitch) * cos(yaw)) + gRight * (cos(pitch) * sin(yaw)) +
+                       gUp * sin(pitch));
         return;
     }
 

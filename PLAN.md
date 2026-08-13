@@ -796,7 +796,7 @@ golden は「前と同じ絵か」しか言えず、最初から間違ってい�
 | R-1 | `finish` 互換の陰影。マテリアルが絵に届く | ✅ 平均差 0.14〜4.76 |
 | R-2 | `pigment` — checker / gradient / radial + `color_map` | ✅ 立体テクスチャ、切り口をまたいで連続 |
 | R-3 | シーンが光を持つ。複数光源・減衰・**距離場のソフトシャドウ** | ✅ 硬い影で POV と平均 3.49 |
-| R-4 | カメラ種別 — orthographic / fisheye / ultra wide angle | ✅ 3.49 / 3.90 / 3.58 / 4.20 |
+| R-4 | カメラ種別 — orthographic / fisheye / ultra wide angle / **panoramic** | ✅ 3.49 / 3.90 / 3.58 / 4.20 / 3.81（正方形フレーム）|
 | R-5 | `reflection`（1 バウンス） | ✅ 平均 3.78。切ると 1.71% の画素が動く |
 | R-5a | `filter` の透過（面を越えて積む、POV と同じ 5 層） | ✅ glass 0.27 / ペットボトル 4.02 |
 | R-5b | 屈折（`interior{ior}`、全反射込み） | ✅ 平均 0.50 |
