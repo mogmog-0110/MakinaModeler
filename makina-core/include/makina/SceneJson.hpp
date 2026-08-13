@@ -354,7 +354,7 @@ inline Scene parseScene(const std::string& text) {
             // so a material and its pattern stay one thing in the file -- which is how POV writes
             // it too, and how anyone editing the JSON by hand would expect to find it.
             dst.textureId = -1;
-            dst._pad = 0;
+            dst.reflection = m.value("reflection", 0.0f);
             if (m.contains("pigment") && m["pigment"].is_object()) {
                 if (s.pigments.count >= Scene::kMaxPigments) {
                     throw SceneJsonError("scene exceeds the " +
@@ -415,6 +415,11 @@ inline std::string writeScene(const Scene& s, const std::string& sourceFile = {}
             {"emission", m.emission},
             {"texture", nullptr},
         });
+        if (m.reflection != 0.0f) {
+            // Written only when set. A file that never mentioned reflection round trips unchanged
+            // rather than gaining a zero, which keeps every existing scene byte for byte.
+            mats.back()["reflection"] = m.reflection;
+        }
         if (m.textureId >= 0 && static_cast<std::uint32_t>(m.textureId) < s.pigments.count) {
             mats.back()["pigment"] = detail::writePigment(s.pigments[m.textureId]);
         }

@@ -28,6 +28,7 @@ struct MkMaterial {
     float  roughness;     float phong;
     float  phongSize;     float metallic;
     float  emission;      float textureIndex;
+    float  reflection;    float3 _pad;
 };
 
 StructuredBuffer<MkMaterial> gMaterials : register(t1);
@@ -51,6 +52,8 @@ MkMaterial mkDefaultMaterial() {
     m.metallic = 0.0;
     m.emission = 0.0;
     m.textureIndex = -1.0;
+    m.reflection = 0.0;
+    m._pad = float3(0, 0, 0);
     return m;
 }
 

@@ -212,7 +212,13 @@ inline std::string povMaterial(const Scene& s, const CsgNode& n, bool silhouette
         t += "\tinterior{media{emission rgb " + num(m.emission) + "}}\n";
     }
     t += "\tfinish{ambient " + num(m.ambient) + " specular " + num(m.specular) + " roughness " +
-         num(1.0 - m.shininess / 128.0) + "}\n";
+         num(1.0 - m.shininess / 128.0);
+    if (m.reflection != 0.0f) {
+        // Written only when set, so every file this exporter has produced until now is unchanged
+        // -- which is what keeps the 7,812-check comparison against the Java reference meaningful.
+        t += " reflection " + num(m.reflection);
+    }
+    t += "}\n";
     return t;
 }
 

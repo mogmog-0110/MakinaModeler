@@ -100,6 +100,78 @@ void mkCameraRay(float2 ndc, out float3 ro, out float3 rd) {
                  + gUp    * (-ndc.y * gTanHalfFov));
 }
 
+/// Everything a surface owes to the lights, and to nothing else.
+///
+/// Lifted out of the frame so a reflected ray can be shaded by the same code. Two copies of the
+/// light loop is exactly how a mirror ends up lit differently from the surface it mirrors, and
+/// there would be no way to see it except by noticing the picture looks wrong.
+///
+/// The occlusion multiplies the light, not the material: POV has no ambient occlusion at all, so
+/// folding it into the ambient term would invent a difference from the oracle in the one place the
+/// two are supposed to be comparable.
+float3 mkLighting(MkMaterial mat, float3 p, float3 n, float3 v, float ao, float eps) {
+    float3 col = mkAmbientTerm(mat, ao);
+    if (gLightCount == 0u) {
+        // No lights in the scene: the one the renderer has always used, unshadowed. Every scene
+        // rendered this way before lights were a thing the format carried, so keeping it means
+        // nothing that used to draw suddenly goes black.
+        return col + mkFinish(mat, n, -gLightDir, v, float3(1, 1, 1)) * ao;
+    }
+    for (uint li = 0u; li < gLightCount; ++li) {
+        const MkLight lg = gLights[li];
+        float3 toLight;
+        float  reach;
+        if (lg.directional != 0u) {
+            toLight = normalize(-lg.position);
+            reach = gFarDist;
+        } else {
+            const float3 delta = lg.position - p;
+            reach = length(delta);
+            toLight = delta / max(reach, 1e-9);
+        }
+
+        float shade = 1.0;
+        if (lg.shadowless == 0u) {
+            shade = mkShadow(p, toLight, reach, lg.softness, eps);
+        }
+        if (shade <= 0.0) {
+            continue;
+        }
+        col += mkFinish(mat, n, toLight, v, lg.color * mkFalloff(lg, reach)) * shade * ao;
+    }
+    return col;
+}
+
+/// What the mirrored ray brings back, or black when it leaves the scene.
+///
+/// One bounce. POV traces up to max_trace_level of them, so a mirror facing a mirror differs --
+/// and that is the honest limit rather than a hidden one: a second bounce costs another march of
+/// the whole field, and the first is what makes a surface read as metal at all.
+///
+/// The reflected surface is shaded without its own reflection, which is what makes one bounce a
+/// bounce rather than an unbounded recursion HLSL would refuse to compile.
+float3 mkReflected(float3 p, float3 n, float3 rd, float eps, float normalEps) {
+    const float3 dir = reflect(rd, n);
+    // Started off the surface, or the first sample reads the surface itself and every mirror comes
+    // back black -- the same self-hit the shadow march has to avoid.
+    float t = eps * 4.0;
+    for (uint s = 0u; s < gMaxSteps; ++s) {
+        const float d = evalCsg(p + dir * t);
+        if (d < eps) {
+            const float3 q = p + dir * t;
+            const float3 qn = calcNormal(q, normalEps);
+            MkMaterial qm = mkMaterialAt(evalCsgMaterial(q).y, gMaterialCount);
+            qm.diffuseColor = mkSurfaceColor(qm, qm.textureIndex, q);
+            return mkLighting(qm, q, qn, -dir, 1.0, eps);
+        }
+        t += d * gStepScale;
+        if (t > gFarDist) {
+            break;
+        }
+    }
+    return float3(0, 0, 0);
+}
+
 float4 PSMain(VSOut i) : SV_Target {
     float2 ndc = i.uv * 2.0 - 1.0;
     float3 rayOrigin;
@@ -149,38 +221,13 @@ float4 PSMain(VSOut i) : SV_Target {
     // through a pattern fixed to the world.
     mat.diffuseColor = mkSurfaceColor(mat, mat.textureIndex, p);
 
-    // The occlusion multiplies the light, not the material: POV has no ambient occlusion at all,
-    // so folding it into the ambient term would be inventing a difference from the oracle in the
-    // one place the two are supposed to be comparable.
-    float3 col = mkAmbientTerm(mat, ao);
-    if (gLightCount == 0u) {
-        // No lights in the scene: the one the renderer has always used, unshadowed. Every scene
-        // rendered this way before lights were a thing the format carried, so keeping it means
-        // nothing that used to draw suddenly goes black.
-        col += mkFinish(mat, n, -gLightDir, -rd, float3(1, 1, 1)) * ao;
-    } else {
-        for (uint li = 0u; li < gLightCount; ++li) {
-            const MkLight lg = gLights[li];
-            float3 toLight;
-            float  reach;
-            if (lg.directional != 0u) {
-                toLight = normalize(-lg.position);
-                reach = gFarDist;
-            } else {
-                const float3 delta = lg.position - p;
-                reach = length(delta);
-                toLight = delta / max(reach, 1e-9);
-            }
+    float3 col = mkLighting(mat, p, n, -rd, ao, hitEps);
 
-            float shade = 1.0;
-            if (lg.shadowless == 0u) {
-                shade = mkShadow(p, toLight, reach, lg.softness, hitEps);
-            }
-            if (shade <= 0.0) {
-                continue;
-            }
-            col += mkFinish(mat, n, toLight, -rd, lg.color * mkFalloff(lg, reach)) * shade * ao;
-        }
+    if (mat.reflection > 0.0) {
+        // Added on top rather than traded against the diffuse. That is POV's default: it only
+        // takes the difference out of the diffuse when the finish asks for conserve_energy, and
+        // matching the default is what keeps the two pictures comparable.
+        col += mkReflected(p, n, rd, hitEps, normalEps) * mat.reflection;
     }
 
     if (gPovMatch == 0u) {

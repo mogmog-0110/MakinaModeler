@@ -50,7 +50,12 @@ struct Material {
     float        shininess;
     float        emission;
     std::int32_t textureId;    ///< index into a texture table, or -1
-    std::int32_t _pad;
+    /// POV's finish{reflection}: how much of the mirrored ray is added on top. Zero is POV's
+    /// default and the value every Grasp3D file means, so nothing that existed before changes.
+    ///
+    /// This sits in what used to be padding, so Material is the same 40 bytes and every scene
+    /// that has ever been written still reads back the same size.
+    float reflection;
 };
 static_assert(sizeof(Material) == 40);
 static_assert(std::is_trivially_copyable_v<Material>);

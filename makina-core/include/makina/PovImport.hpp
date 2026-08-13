@@ -487,7 +487,7 @@ private:
         m.shininess = 0.0f;
         m.emission = 0.0f;
         m.textureId = -1;
-        m._pad = 0;
+        m.reflection = 0.0f;
         readAppearanceInto(m);
         return m;
     }
@@ -545,6 +545,18 @@ private:
             if (w == "ambient")  { m.ambient  = static_cast<float>(number()); continue; }
             if (w == "specular") { m.specular = static_cast<float>(number()); continue; }
             if (w == "emission") { m.emission = static_cast<float>(number()); continue; }
+            if (w == "reflection") {
+                // POV also writes this as a block with its own colors and falloff. A plain number
+                // is the common form and the one this model holds; the block is reported instead
+                // of having its first number taken as though it were the whole thing.
+                if (isPunct('{')) {
+                    note("finish reflection block");
+                    skipBlock();
+                    continue;
+                }
+                m.reflection = static_cast<float>(number());
+                continue;
+            }
             if (w == "roughness") {
                 // The inverse of the conversion RenderMaterial.hpp does on the way out.
                 m.shininess = static_cast<float>((1.0 - number()) * 128.0);

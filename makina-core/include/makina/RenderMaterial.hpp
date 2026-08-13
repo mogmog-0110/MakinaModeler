@@ -26,7 +26,7 @@
 
 namespace makina {
 
-/// Shader-side material. 56 bytes, matching the MkMaterial declared in scene_finish.hlsl.
+/// Shader-side material. 72 bytes, matching the MkMaterial declared in scene_finish.hlsl.
 struct GpuMaterial {
     float diffuseColor[3];  float alpha;
     float ambient;          float diffuse;
@@ -36,8 +36,11 @@ struct GpuMaterial {
     /// Which pigment paints this surface, or -1. A float because it rides in a float struct and
     /// the shader compares it against a count; the values are small integers either way.
     float emission;         float textureIndex;
+    /// POV adds the mirrored ray on top rather than trading it against the diffuse, unless the
+    /// finish asks for conserve_energy. Matching that is what keeps the comparison meaningful.
+    float reflection;       float _pad[3];
 };
-static_assert(sizeof(GpuMaterial) == 56, "GpuMaterial must match the HLSL declaration");
+static_assert(sizeof(GpuMaterial) == 72, "GpuMaterial must match the HLSL declaration");
 static_assert(std::is_trivially_copyable_v<GpuMaterial>);
 
 namespace povDefaults {
@@ -72,6 +75,7 @@ inline GpuMaterial defaultGpuMaterial() {
     g.metallic = povDefaults::kMetallic;
     g.emission = 0.0f;
     g.textureIndex = -1.0f;
+    g.reflection = 0.0f;
     return g;
 }
 
@@ -100,6 +104,7 @@ inline GpuMaterial toGpuMaterial(const Material& m) {
     }
     g.emission = m.emission;
     g.textureIndex = static_cast<float>(m.textureId);
+    g.reflection = m.reflection;
     return g;
 }
 
