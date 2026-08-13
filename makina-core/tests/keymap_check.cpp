@@ -103,10 +103,13 @@ int main() {
         std::string error;
         check(maya.load(makina::mayaKeymapJson(), error), error);
 
-        // A subset match would make alt+left drag also fire the plain left binding, so orbiting
-        // would select at the same time.
-        check(maya.resolve(drag(makina::MouseButton::Left)).empty(),
-              "a bare left drag resolved to something");
+        // Modifiers must match exactly, not as a subset: alt+left drag is the orbit, and a bare
+        // left drag is the selection rectangle. A subset match would fire both at once, so
+        // orbiting would drag a rectangle across the model at the same time.
+        check(maya.resolve(drag(makina::MouseButton::Left)) == "select.box",
+              "a bare left drag should be the selection rectangle");
+        check(maya.resolve(drag(makina::MouseButton::Left, makina::mods::kAlt)) == "view.orbit",
+              "alt and a left drag should orbit");
         check(maya.resolve(click(makina::MouseButton::Left, makina::mods::kAlt)).empty(),
               "alt+left click resolved to the unmodified binding");
     }

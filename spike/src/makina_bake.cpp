@@ -16,6 +16,7 @@
 #include "dxc_invoke.hpp"
 #include "scene_codegen.hpp"
 
+#include <makina/Edit.hpp>
 #include <makina/Flatten.hpp>
 #include <makina/SceneJson.hpp>
 
@@ -89,7 +90,9 @@ int main(int argc, char** argv) {
     try {
         const std::filesystem::path source(scenePath);
         const std::string text = readFile(scenePath);
-        const makina::Scene scene = makina::parseScene(text);
+        // The solid, not the tree that was authored: a muted subtree is not part of the
+        // shape, and baking one in would put it in the shader and nowhere else.
+        const makina::Scene scene = makina::withoutMuted(makina::parseScene(text));
         const makina::EvalProgram prog = makina::flatten(scene);
 
         if (prog.nodes.empty()) {

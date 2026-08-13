@@ -5,11 +5,14 @@
 // difference between moving a bracket and moving it twice as far, and nothing about the picture
 // says which happened.
 
+#include <makina/Bounds.hpp>
 #include <makina/Eval.hpp>
 #include <makina/Selection.hpp>
 #include <makina/SceneJson.hpp>
 
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -44,7 +47,7 @@ makina::Scene threeNodes() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::printf("makina-core selection\n\n");
 
     const makina::Scene s = threeNodes();
@@ -152,6 +155,53 @@ int main() {
         // every check above pass and still break a scene the moment it was saved.
         check(makina::writeScene(makina::withoutMuted(plain)) == makina::writeScene(plain),
               "a scene with nothing muted comes back byte for byte");
+    }
+
+    // ---------------------------------------------------------------- the fixtures
+    //
+    // Every axis of the comparison passes on a muted scene whether or not anything honours the
+    // flag: if they all ignore it they all ignore it together and agree perfectly. What they check
+    // is that the paths do the same thing, not that the thing is the right one.
+    //
+    // So the fixture itself is checked here: a scene that carries the flag has to be a scene the
+    // flag changes. Without this, clearing "muted" out of the file by accident would leave every
+    // check in the project passing and the fixture testing nothing.
+    int carryingTheFlag = 0;
+    for (int i = 1; i < argc; ++i) {
+        std::ifstream in(argv[i], std::ios::binary);
+        if (!in) {
+            continue;
+        }
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        const makina::Scene authored = makina::parseScene(buf.str());
+        if (!makina::hasMuted(authored)) {
+            continue;
+        }
+        ++carryingTheFlag;
+        const makina::Scene solid = makina::withoutMuted(authored);
+        check(solid.nodes.count < authored.nodes.count,
+              std::string(argv[i]) + ": muting took nothing out of the tree");
+
+        const makina::Aabb a = makina::worldBounds(authored).box;
+        const makina::Aabb b = makina::worldBounds(solid).box;
+        bool smaller = false;
+        for (int k = 0; k < 3; ++k) {
+            if (b.lo[k] > a.lo[k] + 1e-9 || b.hi[k] < a.hi[k] - 1e-9) {
+                smaller = true;
+            }
+        }
+        check(smaller, std::string(argv[i]) +
+                           ": muting changed nothing the picture could show -- this fixture would "
+                           "pass every axis with the flag ignored");
+    }
+
+    // And at least one of them has to carry it. Skipping the scenes that do not is right, but on
+    // its own it means a fixture that lost its flag would be quietly skipped rather than fail --
+    // which is what the first version of this did, and it passed with the flag deleted.
+    if (argc > 1) {
+        check(carryingTheFlag > 0,
+              "no fixture carries a muted node, so nothing here tests the flag at all");
     }
 
     if (failures == 0) {

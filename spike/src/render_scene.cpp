@@ -9,6 +9,7 @@
 #include "image_out.hpp"
 #include "scene_codegen.hpp"
 
+#include <makina/Edit.hpp>
 #include <makina/Bounds.hpp>
 #include <makina/Pov.hpp>
 #include <makina/RenderMaterial.hpp>
@@ -412,7 +413,11 @@ int main(int argc, char** argv) {
             std::printf("%s\n", tag.c_str());
 
             try {
-                const makina::Scene scene = makina::parseScene(readFile(scenePath));
+                // The solid, not the tree that was authored. A muted subtree is not part of
+                // the shape (Op.hpp), and a tool that skipped this step would draw or
+                // export something the modeller does not show.
+                const makina::Scene scene =
+                    makina::withoutMuted(makina::parseScene(readFile(scenePath)));
                 const makina::EvalProgram prog = makina::flatten(scene);
                 const makina::BoundsResult bounds = makina::worldBounds(scene);
 

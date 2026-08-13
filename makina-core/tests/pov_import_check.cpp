@@ -258,7 +258,10 @@ void compareAppearance(const makina::Scene& before, const makina::Scene& after) 
 
 void roundTrip(const std::string& path) {
     std::printf("%s\n", path.c_str());
-    const makina::Scene original = makina::parseScene(readFile(path));
+    // The solid, not the tree that was authored. A .pov has no way to say "this node is muted",
+    // so the only thing a round trip can preserve is the shape the mute leaves behind -- and
+    // handing the exporter the authored tree would write out a node the modeller does not draw.
+    const makina::Scene original = makina::withoutMuted(makina::parseScene(readFile(path)));
 
     makina::PovOptions opt;
     opt.silhouette = false;

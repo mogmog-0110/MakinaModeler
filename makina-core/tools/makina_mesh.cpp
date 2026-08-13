@@ -5,6 +5,7 @@
 // The boundary representation the BSP boolean already produces, serialized. Not an isosurface
 // extraction -- MeshExport.hpp explains the difference and why it matters here.
 
+#include <makina/Edit.hpp>
 #include <makina/MeshExport.hpp>
 #include <makina/SceneJson.hpp>
 
@@ -67,7 +68,9 @@ int main(int argc, char** argv) {
 
     try {
         const std::filesystem::path source(scenePath);
-        const makina::Scene scene = makina::parseScene(readFile(scenePath));
+        // The solid, not the tree that was authored. A mesh carrying a muted subtree would
+        // be a different object from the one on screen.
+        const makina::Scene scene = makina::withoutMuted(makina::parseScene(readFile(scenePath)));
         const makina::TessellationResult mesh = makina::tessellate(scene);
 
         if (mesh.solids.empty()) {

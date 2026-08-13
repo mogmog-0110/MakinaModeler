@@ -1,0 +1,36 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "nextId": 9,
+  "materials": [
+    { "id": 0, "diffuse": [200, 180, 140], "alpha": 1.0, "ambient": 0.12,
+      "specular": 0.2, "shininess": 40.0, "emission": 0.0, "texture": null },
+    { "id": 1, "diffuse": [90, 140, 200], "alpha": 1.0, "ambient": 0.12,
+      "specular": 0.0, "shininess": 1.0, "emission": 0.0, "texture": null }
+  ],
+  "lights": [
+    { "directional": false, "shadowless": false, "position": [4.0, 5.0, 3.0],
+      "color": [255, 248, 238], "softness": 0.0, "fadeDistance": 0.0, "fadePower": 0.0 }
+  ],
+  "root": {
+    "op": "SceneRoot", "id": 1, "name": "Scene",
+    "children": [
+      { "op": "Difference", "id": 2, "name": "block", "material": 0,
+        "children": [
+          { "op": "Box", "id": 3, "name": "body",
+            "x1": -1.0, "y1": -0.6, "z1": -0.8, "x2": 1.0, "y2": 0.6, "z2": 0.8 },
+          { "op": "Cylinder", "id": 4, "name": "bore", "muted": true,
+            "capPoint": 1.2, "basePoint": -1.2, "radius": 0.45 }
+        ] },
+      { "op": "Translate", "id": 5, "name": "beside", "x": 2.4, "y": 0.0, "z": 0.0,
+        "children": [
+          { "op": "Sphere", "id": 6, "name": "knob", "material": 1, "radius": 0.55 }
+        ] },
+      { "op": "Translate", "id": 7, "name": "gone", "x": -2.4, "y": 0.0, "z": 0.0,
+        "muted": true,
+        "children": [
+          { "op": "Sphere", "id": 8, "name": "ghost", "material": 1, "radius": 0.55 }
+        ] }
+    ]
+  }
+}
