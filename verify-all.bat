@@ -63,6 +63,12 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    what a frame costs, against the ceiling the plan sets
+    echo.
+    call "%HERE%spike\perf-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    the compiled program against the interpreted one
     echo.
     call "%HERE%spike\interpret-check.bat"
