@@ -101,7 +101,9 @@ float evalCsg(float3 wp) {
 ///
 /// The boolean rules match scene_codegen.hpp exactly, including Difference keeping the left
 /// operand's material for the cut surface. Two implementations of the same rule is the risk this
-/// project is built to catch, and the interpreted and generated pictures are compared for it.
+/// project is built to catch, and interpret-check.bat compares the two pictures for it -- to a
+/// tenth of what two separate renderers are held to, because these differ only in the order the
+/// arithmetic happens in. They come out identical, so that limit is not a tuned one.
 float3 evalCsgMaterial(float3 wp) {
     if (gProgramCount == 0u) {
         return float3(1.0e30, 255.0, -1.0);

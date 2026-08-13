@@ -23,6 +23,7 @@
 #include "image_out.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -169,12 +170,6 @@ Report compare(const Image& a, const Image& b, int strongThreshold,
 }  // namespace
 
 int main(int argc, char** argv) {
-    // Pairs, the same shape silhouette_compare takes, so one batch file can drive both.
-    if (argc < 3 || ((argc - 1) % 2) != 0) {
-        std::fprintf(stderr, "usage: color_compare <march.bmp> <pov.bmp> [<march.bmp> <pov.bmp>]\n");
-        return 2;
-    }
-
     // Two gates, and the second is not a percentile, which was the first attempt.
     //
     // A hard-edged pattern breaks percentiles. Where a checker changes square the two colors are
@@ -186,14 +181,45 @@ int main(int argc, char** argv) {
     //
     // So the second gate counts *how many* pixels disagree strongly rather than asking how bad the
     // 99th is. A shading error moves the mean; a pattern that has slipped moves the share.
-    constexpr double kMeanLimit = 6.0;
-    constexpr int    kStrong = 40;
-    constexpr double kStrongShareLimit = 0.02;
+    //
+    // The defaults are what two *different* renderers can be held to. Two paths through the same
+    // shading, which is what --mean is for, have to agree far more closely than that, and a limit
+    // loose enough for POV would pass them however far apart they were.
+    double      meanLimit = 6.0;
+    double      strongShareLimit = 0.02;
+    std::string title = "makina ray march vs POV-Ray, pixel for pixel";
+    std::string agreed = "the two renderers put the same colors on the same surfaces";
+    constexpr int kStrong = 40;
 
-    std::printf("makina ray march vs POV-Ray, pixel for pixel\n\n");
+    int first = 1;
+    while (first + 1 < argc && argv[first][0] == '-') {
+        const std::string flag = argv[first];
+        if (flag == "--mean") {
+            meanLimit = std::atof(argv[first + 1]);
+        } else if (flag == "--share") {
+            strongShareLimit = std::atof(argv[first + 1]);
+        } else if (flag == "--title") {
+            title = argv[first + 1];
+        } else if (flag == "--agreed") {
+            agreed = argv[first + 1];
+        } else {
+            std::fprintf(stderr, "color_compare: unknown option '%s'\n", flag.c_str());
+            return 2;
+        }
+        first += 2;
+    }
+
+    // Pairs, the same shape silhouette_compare takes, so one batch file can drive both.
+    if (argc - first < 2 || ((argc - first) % 2) != 0) {
+        std::fprintf(stderr, "usage: color_compare [--mean <x>] [--share <x>] [--title <text>] "
+                             "[--agreed <text>] <a.bmp> <b.bmp> [<a.bmp> <b.bmp>]\n");
+        return 2;
+    }
+
+    std::printf("%s\n\n", title.c_str());
 
     int failures = 0;
-    for (int i = 1; i + 1 < argc; i += 2) {
+    for (int i = first; i + 1 < argc; i += 2) {
         Image march, pov;
         std::string why;
         if (!readBmp(argv[i], march, why) || !readBmp(argv[i + 1], pov, why)) {
@@ -227,9 +253,9 @@ int main(int argc, char** argv) {
         if (r.counted == 0) {
             std::printf("    FAIL  neither renderer drew anything; there is nothing to compare\n");
             ++failures;
-        } else if (r.mean > kMeanLimit || share > kStrongShareLimit) {
-            std::printf("    FAIL  past mean %.1f or %.0f%% strongly differing\n", kMeanLimit,
-                        kStrongShareLimit * 100.0);
+        } else if (r.mean > meanLimit || share > strongShareLimit) {
+            std::printf("    FAIL  past mean %.1f or %.0f%% strongly differing\n", meanLimit,
+                        strongShareLimit * 100.0);
             ++failures;
         } else {
             std::printf("    agrees -> %s\n", diffPath.c_str());
@@ -238,7 +264,10 @@ int main(int argc, char** argv) {
 
     std::printf("\n");
     if (failures == 0) {
-        std::printf("the two renderers put the same colors on the same surfaces\n");
+        // The caller's own words when it gave any: "the two renderers" is wrong for a comparison
+        // between two evaluators of the same renderer, and a line that says the wrong thing on
+        // success is read more often than one that says it on failure.
+        std::printf("%s\n", agreed.c_str());
         return 0;
     }
     std::printf("%d comparison(s) FAILED\n", failures);
