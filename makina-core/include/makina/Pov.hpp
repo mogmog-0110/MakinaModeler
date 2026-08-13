@@ -208,8 +208,17 @@ inline std::string povMaterial(const Scene& s, const CsgNode& n, bool silhouette
         t = "\tpigment{color rgbf<" + num(m.diffuse[0]) + "," + num(m.diffuse[1]) + "," +
             num(m.diffuse[2]) + "," + num(1.0 - m.alpha) + ">}\n";
     }
-    if (m.emission != 0.0f) {
-        t += "\tinterior{media{emission rgb " + num(m.emission) + "}}\n";
+    // One interior per object is all POV takes, so refraction and emission share the block rather
+    // than each writing its own -- the second would be a parse error.
+    if (m.emission != 0.0f || m.ior > 1.0f) {
+        t += "\tinterior{";
+        if (m.ior > 1.0f) {
+            t += "ior " + num(m.ior) + " ";
+        }
+        if (m.emission != 0.0f) {
+            t += "media{emission rgb " + num(m.emission) + "}";
+        }
+        t += "}\n";
     }
     t += "\tfinish{ambient " + num(m.ambient) + " specular " + num(m.specular) + " roughness " +
          num(1.0 - m.shininess / 128.0);

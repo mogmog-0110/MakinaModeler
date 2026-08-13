@@ -1,0 +1,119 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "nextId": 7,
+  "materials": [
+    {
+      "id": 0,
+      "diffuse": [
+        255,
+        255,
+        255
+      ],
+      "alpha": 1.0,
+      "ambient": 0.25,
+      "specular": 0.0,
+      "shininess": 1.0,
+      "emission": 0.0,
+      "texture": null,
+      "pigment": {
+        "type": "checker",
+        "colorA": [
+          235,
+          235,
+          240
+        ],
+        "colorB": [
+          25,
+          25,
+          35
+        ],
+        "scale": [
+          0.45,
+          0.45,
+          0.45
+        ],
+        "translate": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "diffuse": [
+        235,
+        245,
+        250
+      ],
+      "alpha": 0.2,
+      "ambient": 0.05,
+      "specular": 0.0,
+      "shininess": 1.0,
+      "emission": 0.0,
+      "texture": null,
+      "ior": 1.5
+    }
+  ],
+  "lights": [
+    {
+      "directional": false,
+      "shadowless": true,
+      "position": [
+        4.0,
+        5.0,
+        6.0
+      ],
+      "color": [
+        255,
+        250,
+        245
+      ],
+      "softness": 0.0,
+      "fadeDistance": 0.0,
+      "fadePower": 0.0
+    }
+  ],
+  "root": {
+    "op": "SceneRoot",
+    "id": 1,
+    "name": "Scene",
+    "children": [
+      {
+        "op": "Box",
+        "id": 3,
+        "name": "wall",
+        "material": 0,
+        "x1": -3.0,
+        "y1": -2.2,
+        "z1": -2.6,
+        "x2": 3.0,
+        "y2": 2.2,
+        "z2": -2.2
+      },
+      {
+        "op": "Translate",
+        "id": 4,
+        "name": "lens",
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0,
+        "children": [
+          {
+            "op": "Sphere",
+            "id": 5,
+            "name": "ball",
+            "material": 1,
+            "radius": 1.0
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -355,6 +355,7 @@ inline Scene parseScene(const std::string& text) {
             // it too, and how anyone editing the JSON by hand would expect to find it.
             dst.textureId = -1;
             dst.reflection = m.value("reflection", 0.0f);
+            dst.ior = m.value("ior", 1.0f);
             if (m.contains("pigment") && m["pigment"].is_object()) {
                 if (s.pigments.count >= Scene::kMaxPigments) {
                     throw SceneJsonError("scene exceeds the " +
@@ -415,6 +416,11 @@ inline std::string writeScene(const Scene& s, const std::string& sourceFile = {}
             {"emission", m.emission},
             {"texture", nullptr},
         });
+        if (m.ior > 1.0f) {
+            // The same rule as reflection below: written only when it says something, so a scene
+            // that predates refraction still round trips byte for byte.
+            mats.back()["ior"] = m.ior;
+        }
         if (m.reflection != 0.0f) {
             // Written only when set. A file that never mentioned reflection round trips unchanged
             // rather than gaining a zero, which keeps every existing scene byte for byte.

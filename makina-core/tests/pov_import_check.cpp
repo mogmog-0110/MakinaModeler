@@ -195,6 +195,27 @@ void boundaries() {
     notes("sphere{<0,0,0>,1 normal{bumps 0.1}}", "normal");
     notes("sphere{<0,0,0>,1 no_shadow}", "no_shadow");
     notes("global_settings{ radiosity{} } sphere{<0,0,0>,1}", "global_settings");
+    // An interior is read for its ior and reports the rest of itself rather than going quiet:
+    // a scene whose fog was dropped renders happily and is not the scene in the file.
+    notes("sphere{<0,0,0>,1 pigment{color rgbf<1,1,1,0.5>} interior{ior 1.5 fade_power 2}}",
+          "fade_power");
+
+    // The index of refraction, and the order it may arrive in. POV hangs it on the object and the
+    // texture on the surface, so a file is free to write either first, and the second must not
+    // undo the first.
+    try {
+        const char* const both[2] = {
+            "sphere{<0,0,0>,1 pigment{color rgbf<1,1,1,0.5>} interior{ior 1.5}}",
+            "sphere{<0,0,0>,1 interior{ior 1.5} pigment{color rgbf<1,1,1,0.5>}}"};
+        for (int i = 0; i < 2; ++i) {
+            const makina::PovImportResult r = makina::importPov(both[i]);
+            check(r.scene.materials.count == 1, "the sphere should carry one material");
+            check(r.scene.materials[0].ior == 1.5f, "ior was lost");
+            check(r.scene.materials[0].alpha == 0.5f, "the pigment was lost");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("interior{ior} was refused: ") + e.what());
+    }
 
     // A cylinder that is not along an axis, checked against where the solid has to be rather than
     // against the transform the reader built. Stating the expected geometry independently is the

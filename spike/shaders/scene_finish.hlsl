@@ -20,7 +20,7 @@
 #ifndef MAKINA_SCENE_FINISH_HLSL
 #define MAKINA_SCENE_FINISH_HLSL
 
-/// Must match makina::Material byte for byte (Scene.hpp asserts the size on the CPU side).
+/// Must match makina::GpuMaterial byte for byte (RenderMaterial.hpp asserts the size).
 struct MkMaterial {
     float3 diffuseColor;  float alpha;
     float  ambient;       float diffuse;
@@ -28,7 +28,8 @@ struct MkMaterial {
     float  roughness;     float phong;
     float  phongSize;     float metallic;
     float  emission;      float textureIndex;
-    float  reflection;    float3 _pad;
+    float  reflection;    float ior;
+    float2 _pad;
 };
 
 StructuredBuffer<MkMaterial> gMaterials : register(t1);
@@ -53,7 +54,8 @@ MkMaterial mkDefaultMaterial() {
     m.emission = 0.0;
     m.textureIndex = -1.0;
     m.reflection = 0.0;
-    m._pad = float3(0, 0, 0);
+    m.ior = 1.0;
+    m._pad = float2(0, 0);
     return m;
 }
 

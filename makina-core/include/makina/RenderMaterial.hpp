@@ -38,7 +38,9 @@ struct GpuMaterial {
     float emission;         float textureIndex;
     /// POV adds the mirrored ray on top rather than trading it against the diffuse, unless the
     /// finish asks for conserve_energy. Matching that is what keeps the comparison meaningful.
-    float reflection;       float _pad[3];
+    /// POV's interior{ior}. One, or anything below it, means the ray goes straight through.
+    float reflection;       float ior;
+    float _pad[2];
 };
 static_assert(sizeof(GpuMaterial) == 72, "GpuMaterial must match the HLSL declaration");
 static_assert(std::is_trivially_copyable_v<GpuMaterial>);
@@ -76,6 +78,7 @@ inline GpuMaterial defaultGpuMaterial() {
     g.emission = 0.0f;
     g.textureIndex = -1.0f;
     g.reflection = 0.0f;
+    g.ior = 1.0f;
     return g;
 }
 
@@ -105,6 +108,9 @@ inline GpuMaterial toGpuMaterial(const Material& m) {
     g.emission = m.emission;
     g.textureIndex = static_cast<float>(m.textureId);
     g.reflection = m.reflection;
+    // Below one is what a scene written before this field existed reads back as, and POV has no
+    // meaning for it. Folded to one here so the shader has a single case to handle.
+    g.ior = m.ior > 1.0f ? m.ior : 1.0f;
     return g;
 }
 

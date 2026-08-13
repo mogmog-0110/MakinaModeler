@@ -240,7 +240,8 @@ float4 PSMain(VSOut i) : SV_Target {
         // normal aimed away and light as though it were in shadow. POV has no notion of a
         // back face: it flips the normal towards whatever is looking at the surface, which is
         // also why a plane in POV is lit from either side.
-        if (dot(n, rd) > 0.0) {
+        const bool entering = dot(n, rd) < 0.0;
+        if (!entering) {
             n = -n;
         }
 
@@ -296,6 +297,20 @@ float4 PSMain(VSOut i) : SV_Target {
             // Below half a level of an 8-bit channel. Carrying on would cost another march of the
             // field to change nothing that can be written to the file.
             break;
+        }
+
+        if (mat.ior > 1.0) {
+            // POV's interior{ior}. The ratio is the one the ray is crossing into over the one it
+            // is leaving, and only air is on the other side here: this model has no notion of one
+            // solid nested inside another with its own interior, so a ray that enters two glasses
+            // in a row is bent as though it had surfaced in between. Naming that is better than a
+            // stack the field cannot tell it how to unwind.
+            const float eta = entering ? 1.0 / mat.ior : mat.ior;
+            const float3 bent = refract(rd, n, eta);
+            // refract() returns zero past the critical angle. POV mirrors there rather than
+            // dropping the ray, and so does the far wall of a glass sphere near its rim, which is
+            // where the two renderers would otherwise differ most visibly.
+            rd = dot(bent, bent) > 0.0 ? bent : reflect(rd, n);
         }
 
         // Off the surface far enough that the next march cannot find it again. A fixed nudge

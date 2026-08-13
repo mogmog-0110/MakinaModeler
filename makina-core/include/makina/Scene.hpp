@@ -56,8 +56,14 @@ struct Material {
     /// This sits in what used to be padding, so Material is the same 40 bytes and every scene
     /// that has ever been written still reads back the same size.
     float reflection;
+    /// POV's interior{ior}: how much the ray bends on the way through a see-through surface.
+    ///
+    /// Zero means the same as one here. A Scene is zero-filled and every file written before this
+    /// field existed says nothing about it, so reading an unset value as "no bending" is what keeps
+    /// those scenes rendering as they did. POV does not accept an index below one either.
+    float ior;
 };
-static_assert(sizeof(Material) == 40);
+static_assert(sizeof(Material) == 44);
 static_assert(std::is_trivially_copyable_v<Material>);
 
 /// What a POV-Ray pigment pattern is, as far as this renderer goes.

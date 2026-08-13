@@ -268,11 +268,13 @@ private:
             out[1] = number();
             expectPunct(',');
             out[2] = number();
-            // A fourth component is a filter or a transmit; read and dropped, since a caller that
-            // wants it asks for a material instead.
+            // A fourth and fifth component are POV's filter and transmit. Kept aside rather than
+            // dropped: geometry never wants them, a pigment always does, and a reader that threw
+            // them away turned every see-through surface in the file into a solid one.
+            m_tail.clear();
             while (isPunct(',')) {
                 take();
-                (void)number();
+                m_tail.push_back(number());
             }
             expectPunct('>');
             return;
@@ -478,7 +480,8 @@ private:
 
     // ---------------------------------------------------------------- appearance
 
-    Material readAppearance() {
+    /// POV's default texture, which is what an object with no texture of its own wears.
+    static Material defaultAppearance() {
         Material m{};
         m.diffuse[0] = m.diffuse[1] = m.diffuse[2] = 1.0f;
         m.alpha = 1.0f;
@@ -488,8 +491,44 @@ private:
         m.emission = 0.0f;
         m.textureId = -1;
         m.reflection = 0.0f;
+        m.ior = 1.0f;
+        return m;
+    }
+
+    Material readAppearance() {
+        Material m = defaultAppearance();
         readAppearanceInto(m);
         return m;
+    }
+
+    /// `interior { ... }`, of which only the index of refraction is representable.
+    ///
+    /// Returns 1.0 when the block says nothing about `ior`, which is POV's own default and means
+    /// the ray goes straight through. Everything else in there -- media, fade, caustics -- is
+    /// reported by name, because an interior that was read but half ignored is exactly the kind of
+    /// scene that renders without complaint and is not the one in the file.
+    float readInterior() {
+        take();
+        expectPunct('{');
+        float ior = 1.0f;
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("an interior block was not closed");
+            }
+            if (isWord("ior")) {
+                take();
+                ior = static_cast<float>(number());
+                continue;
+            }
+            if (peek().kind == PovTokenKind::Word) {
+                note("interior " + take().text);
+                skipValue();
+                continue;
+            }
+            skipValue();
+        }
+        take();
+        return ior;
     }
 
     void readAppearanceInto(Material& m) {
@@ -536,9 +575,25 @@ private:
                     continue;   // `color rgb <...>`: the keyword pair, take the second lap
                 }
                 double c[3];
+                m_tail.clear();
                 vector3(c);
                 for (int i = 0; i < 3; ++i) {
                     m.diffuse[i] = static_cast<float>(c[i]);
+                }
+                // POV's fourth component is a filter after `rgbf` and a transmit after `rgbt`,
+                // and `rgbft` carries both. This model holds one opacity, so filter is what it
+                // reads; transmit is reported instead of being folded in, because a transmitting
+                // surface does not tint what is behind it and pretending it does is a picture
+                // nobody would question.
+                if (!m_tail.empty()) {
+                    if (w == "rgbt") {
+                        note("pigment transmit");
+                    } else {
+                        m.alpha = static_cast<float>(1.0 - m_tail[0]);
+                        if (m_tail.size() > 1 && m_tail[1] != 0.0) {
+                            note("pigment transmit");
+                        }
+                    }
                 }
                 continue;
             }
@@ -915,15 +970,33 @@ private:
     }
 
     /// The modifiers after a shape's own arguments, up to the closing brace.
+    ///
+    /// Appearance is gathered and interned once, at the end. POV lets a texture and an interior sit
+    /// on the same object in either order, and interning after each one would leave the half-built
+    /// material in the table for nothing to point at.
     PovNode modifiers(PovNode node) {
+        Material appearance = node.material >= 0
+                                  ? m_materials[static_cast<std::size_t>(node.material)]
+                                  : defaultAppearance();
+        bool dressed = false;
         while (!isPunct('}')) {
             if (peek().kind == PovTokenKind::End) {
                 refuse("an object block was not closed");
             }
 
             if (isWord("texture") || isWord("pigment") || isWord("finish") || isWord("normal")) {
-                const Material m = readAppearance();
-                node.material = materialIndex(m);
+                // The index of refraction survives a later texture. POV hangs it on the object and
+                // the texture on the surface, so a file may write either first and the second must
+                // not undo the first.
+                const float ior = appearance.ior;
+                appearance = readAppearance();
+                appearance.ior = ior;
+                dressed = true;
+                continue;
+            }
+            if (isWord("interior")) {
+                appearance.ior = readInterior();
+                dressed = true;
                 continue;
             }
             if (isWord("translate") || isWord("scale") || isWord("rotate")) {
@@ -937,12 +1010,15 @@ private:
                 continue;
             }
             if (peek().kind == PovTokenKind::Word && m_textures.count(peek().text) > 0) {
-                node.material = materialIndex(m_textures[take().text]);
+                const float ior = appearance.ior;
+                appearance = m_textures[take().text];
+                appearance.ior = ior;
+                dressed = true;
                 continue;
             }
             if (peek().kind == PovTokenKind::Word) {
-                // open, hollow, no_shadow, interior, bounded_by, photons: each changes what the
-                // object is or how it is drawn, so each is reported rather than dropped.
+                // open, hollow, no_shadow, bounded_by, photons: each changes what the object is or
+                // how it is drawn, so each is reported rather than dropped.
                 note("modifier " + take().text);
                 skipValue();
                 continue;
@@ -950,6 +1026,9 @@ private:
             skipValue();
         }
         take();
+        if (dressed) {
+            node.material = materialIndex(appearance);
+        }
         return node;
     }
 
@@ -1120,6 +1199,12 @@ private:
     std::map<std::string, Material> m_textures;
     std::map<std::string, PovNode> m_objects;
     std::map<std::string, std::vector<PovMove>> m_transforms;
+    /// The components past the third of the last `<...>` literal read.
+    ///
+    /// A side channel, because the vector grammar is shared with geometry and widening every
+    /// caller to four numbers would put a filter where a coordinate goes. The last literal wins,
+    /// which is what a color wants: it is the whole expression in every file this reads.
+    std::vector<double> m_tail;
     std::vector<Material> m_materials;
     std::vector<std::string> m_unsupported;
 };
