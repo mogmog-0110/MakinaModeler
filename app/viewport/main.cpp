@@ -299,6 +299,11 @@ int main(int argc, char** argv) {
     std::string savePath;
     std::string statePath;
     bool noShell = false;
+    // A click to play, in window pixels. There is no other way to press a button the page drew:
+    // --keys goes through the keymap and --actions skips the page entirely, so neither would
+    // tell us whether the toolbar is reachable at all.
+    int  clickX = -1;
+    int  clickY = -1;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keymap" && i + 1 < argc) {
@@ -345,6 +350,16 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--save" && i + 1 < argc) {
             savePath = argv[++i];
+        } else if (a == "--click" && i + 1 < argc) {
+            const std::string xy = argv[++i];
+            const std::size_t comma = xy.find(',');
+            if (comma == std::string::npos) {
+                std::fprintf(stderr, "--click wants \"x,y\" in window pixels, got '%s'\n",
+                             xy.c_str());
+                return 2;
+            }
+            clickX = std::atoi(xy.substr(0, comma).c_str());
+            clickY = std::atoi(xy.substr(comma + 1).c_str());
         } else if (a == "--no-shell") {
             // Starting a browser costs about a second and the scripted checks do sixteen runs.
             // It is a flag rather than something inferred from --keys, because a check that
@@ -366,7 +381,7 @@ int main(int argc, char** argv) {
                      "       [--frames N] [--screenshot <path>]\n"
                      "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n"
                      "       [--actions \"view.front view.genuine\"] [--dump-state <path>]\n"
-                     "       [--no-shell]\n");
+                     "       [--no-shell] [--click <x,y>]\n");
         return 2;
     }
 
@@ -608,6 +623,11 @@ int main(int argc, char** argv) {
         std::uint32_t lastPickedId = 0;
         makina::TransformSession transform;
         std::string   lastStatus;
+        // Who the mouse belongs to. Latched on the press rather than tested every frame: a drag
+        // that began in the viewport has to keep the pointer when it wanders over a panel, or
+        // orbiting near the outliner stops dead the moment the cursor crosses the edge -- and
+        // the same in reverse, a drag along a slider must not start orbiting at the panel's edge.
+        bool shellOwnsPointer = false;
         // The tree as the frame should show it, which during a drag is not the committed one.
         // Everything the frame derives from the scene -- the program, the bounds, the ground, the
         // selection box -- has to come from the same tree, or the picture jumps on commit for
@@ -620,6 +640,8 @@ int main(int argc, char** argv) {
         std::printf("Escape quits.\n\n");
 
         int          frame = 0;
+        // Set on the frame the page first reports itself ready; the click plays two frames later.
+        int          clickFrame = -1;
         std::size_t  scriptAt = 0;
         // The last frame's wall time, for the status bar. One frame rather than an average: the
         // question a modeller is asking is "did that edit just cost me something", and a running
@@ -664,6 +686,46 @@ int main(int argc, char** argv) {
             }
             const double aspect = in.aspect();
 
+            // The scripted click, if there is one. Played late enough that the page has
+            // painted -- a click delivered before the first paint is dropped by the CEF layer
+            // (handleInput refuses until hasEverPainted), and a check built on it would report
+            // "the button does nothing" for a button that works.
+            //
+            // Press and release on different frames, because that is what a click is; a single
+            // frame with the button both down and up is a state no real mouse produces.
+            if (clickX >= 0 && clickFrame < 0 && shell.painted()) {
+                // The first frame the page is ready. Chromium takes as long as it takes, and a
+                // fixed frame number would make this check pass or fail by machine speed.
+                clickFrame = frame;
+            }
+            if (clickX >= 0 && clickFrame >= 0 && frame >= clickFrame + 2 &&
+                frame <= clickFrame + 5) {
+                in.cursorU = static_cast<double>(clickX) / in.width - 0.5;
+                in.cursorV = 0.5 - static_cast<double>(clickY) / in.height;
+                // The cursor arrives on a frame of its own before the button goes down. Who owns
+                // the pointer is decided while nothing is pressed, so a click that moved and
+                // pressed in the same frame would be judged against wherever the real mouse was
+                // sitting -- which is how the first attempt at this managed to clear the
+                // selection instead of pressing the button under the cursor.
+                in.leftDown = frame >= clickFrame + 3 && frame < clickFrame + 5;
+                in.leftPressed = frame == clickFrame + 3;
+            }
+
+            // The pointer, to the page. cursorU/V are [-0.5, 0.5] with V up, and CEF wants
+            // pixels from the top left.
+            {
+                const int px = static_cast<int>((in.cursorU + 0.5) * in.width);
+                const int py = static_cast<int>((0.5 - in.cursorV) * in.height);
+                const bool anyDown = in.leftDown || in.middleDown || in.rightDown;
+                if (!anyDown) {
+                    shellOwnsPointer = shell.takePointer(px, py, false, false, false);
+                } else if (shellOwnsPointer) {
+                    shell.takePointer(px, py, in.leftDown, in.middleDown, in.rightDown);
+                }
+                // When the viewport owns the drag the page is told nothing at all. Forwarding a
+                // drag it never saw begin would leave a button of its own stuck down.
+            }
+
             // A scripted run ignores the physical keyboard entirely. GetKeyState reports whichever
             // modifiers are held anywhere on the machine, so a Shift held while the check happens
             // to be running would stop CTRL+Y matching and the run would quietly not redo. That
@@ -675,7 +737,7 @@ int main(int argc, char** argv) {
             if (live && in.alt) modifiers |= makina::mods::kAlt;
 
             // --- dragging ------------------------------------------------------------------
-            if (in.dx != 0.0 || in.dy != 0.0) {
+            if ((in.dx != 0.0 || in.dy != 0.0) && !shellOwnsPointer) {
                 makina::InputEvent e;
                 e.modifiers = modifiers;
                 e.dragging = true;
@@ -730,7 +792,9 @@ int main(int argc, char** argv) {
             }
 
             // --- clicking ------------------------------------------------------------------
-            if (in.leftPressed || in.middlePressed || in.rightPressed) {
+            // Not when the page has the pointer: a click on a toolbar button would otherwise also
+            // pick whatever solid happens to sit behind it.
+            if ((in.leftPressed || in.middlePressed || in.rightPressed) && !shellOwnsPointer) {
                 makina::InputEvent e;
                 e.modifiers = modifiers;
                 e.button = in.leftPressed     ? makina::MouseButton::Left

@@ -128,13 +128,16 @@ if(WIN32 AND DXC_EXECUTABLE)
 
         # The page and the binder, next to the exe. The binder is the engine's, copied rather
         # than shared: it has to sit beside the html for a file:// URL to resolve it.
+        # Under assets/, because the page is loaded through the engine's app:// scheme rather
+        # than file://. The scheme handler is rooted at <exe>/assets and is the path the bridge
+        # is built for; a file:// document is a different origin and its cefQuery never arrives.
         add_custom_command(TARGET makina_viewport POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/ui"
-                "$<TARGET_FILE_DIR:makina_viewport>/ui"
+                "$<TARGET_FILE_DIR:makina_viewport>/assets/ui"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${MITIRU_DIR}/web/mitiru_runtime"
-                "$<TARGET_FILE_DIR:makina_viewport>/ui/mitiru_runtime"
+                "$<TARGET_FILE_DIR:makina_viewport>/assets/ui/mitiru_runtime"
             COMMENT "makina_viewport: deploying the shell and the binder")
     else()
         message(STATUS
