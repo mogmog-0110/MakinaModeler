@@ -139,19 +139,6 @@ bool hasUnboundedPrimitive(const makina::Scene& s) {
     return false;
 }
 
-/// Whether any material lets light through.
-///
-/// Both renderers trace through one; they disagree on how bright the result is, so a scene with
-/// one is left out of the pixel comparison and says so.
-bool hasTransparentMaterial(const makina::Scene& s) {
-    for (std::uint32_t i = 0; i < s.materials.count; ++i) {
-        if (s.materials[i].alpha < 0.999f) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /// Half the diagonal of a box, which is what every camera distance here is a multiple of.
 double radiusOf(const makina::Aabb& box) {
     if (!box.valid) {
@@ -443,16 +430,7 @@ int main(int argc, char** argv) {
                     continue;
                 }
 
-                if (povMatch && hasTransparentMaterial(scene)) {
-                    // Brightness is close and not equal. The flat 0.70 this used to be turned
-                    // out to be POV blending a filtered surface in gamma rather than in linear
-                    // light, and weighting by that exponent took the mean from 27.4 to 9.5. A
-                    // gamma-space blend is not separable into a per-layer weight, though, so
-                    // closing the rest needs the layers composited in gamma while the shading
-                    // stays linear.
-                    std::printf("    no .pov: a filtered surface is within 9.5 of POV rather "
-                                "than the 6 this comparison holds to\n");
-                } else if (writePov && hasUnboundedPrimitive(scene)) {
+                if (writePov && hasUnboundedPrimitive(scene)) {
                     // POV-Ray has no far plane; the march does. An infinite Plane therefore fills
                     // POV's frame and stops at a circle in ours, and the comparison measures the
                     // far distance rather than the geometry. Skipping is the honest answer -- the

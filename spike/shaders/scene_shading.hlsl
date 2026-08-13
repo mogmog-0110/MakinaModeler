@@ -198,7 +198,7 @@ float4 PSMain(VSOut i) : SV_Target {
     // Bounded rather than "until it leaves the scene": each layer is another march of the whole
     // field, and POV's own max_trace_level is 5. Four is the same order and is stated rather than
     // discovered as a slowdown.
-    const uint kMaxLayers = 4u;
+    const uint kMaxLayers = 5u;
 
     float3 col = float3(0, 0, 0);
     // What fraction of each channel still reaches the eye. Per channel, because POV's filter is
@@ -235,6 +235,14 @@ float4 PSMain(VSOut i) : SV_Target {
         anyHit = true;
         p = origin + rd * t;
         n = calcNormal(p, normalEps);
+        // Turned to face the ray. The gradient always points out of the solid, so the far
+        // wall of a transparent object -- reached from the inside -- would come back with its
+        // normal aimed away and light as though it were in shadow. POV has no notion of a
+        // back face: it flips the normal towards whatever is looking at the surface, which is
+        // also why a plane in POV is lit from either side.
+        if (dot(n, rd) > 0.0) {
+            n = -n;
+        }
 
         float ao = gEnableAO != 0u ? calcAO(p, n, aoReach) : 1.0;
 
@@ -268,20 +276,18 @@ float4 PSMain(VSOut i) : SV_Target {
         // what is left over.
         const float filt = saturate(1.0 - mat.alpha);
 
-        // The surface's own share, weighted in gamma rather than in linear light.
+        // How much of this surface's own shading survives. Not (1 - filter): POV scales by the
+        // *brightest channel of the pigment*, so a dark filtering colour hides less of what is
+        // behind it than a bright one at the same filter value.
         //
-        // Not a fudge factor -- a hypothesis that was tested. Weighting by (1 - filter) in linear
-        // put every glass pixel at a flat 0.70 of POV's, which in linear light is exactly half.
-        // Solving for the weight POV must be using gave 0.5 where (1 - filter) is 0.25, and
-        // 0.25^(1/2.2) = 0.53: POV blends a filtered surface in gamma space. Applying that
-        // exponent moved the mean difference from 27.4 to 9.5 and three sampled points to within
-        // 5%, with the opaque block behind the glass exact to the level.
-        //
-        // Still an approximation of the mechanism rather than the mechanism. A gamma-space blend
-        // is not separable into a per-layer weight, so closing the rest means compositing the
-        // layers in gamma and shading in linear -- which is why a filtered scene is still left
-        // out of the gated comparison (render_scene.cpp says so where it skips one).
-        col += through * here * pow(max(1.0 - filt, 1e-6), 1.0 / 2.2);
+        // Read off POV rather than assumed. A sphere with finish{ambient 1 diffuse 0} renders to
+        // exactly its pigment times this weight, so sweeping filter and colour reports the weight
+        // in the pixel itself: 0.4117/0.4115/0.4117 against 1 - 0.75 * 0.784, and the same to four
+        // places at filter 0.25 and 0.5. A white pigment cannot tell the two rules apart, which is
+        // why the first attempt at this matched one scene and no other.
+        const float weight = 1.0 - filt * max(mat.diffuseColor.r,
+                                              max(mat.diffuseColor.g, mat.diffuseColor.b));
+        col += through * here * weight;
         if (filt <= 0.0) {
             break;
         }
@@ -292,8 +298,20 @@ float4 PSMain(VSOut i) : SV_Target {
             break;
         }
 
-        // Past the surface, or the next march finds the one just left.
-        origin = p + rd * (hitEps * 4.0);
+        // Off the surface far enough that the next march cannot find it again. A fixed nudge
+        // is not enough at a grazing angle: the field stays inside the hit threshold for a
+        // long stretch there, so the next march reports an immediate hit on the surface just
+        // shaded and composites it over itself once per layer. That showed as a bright fringe
+        // on the silhouette -- 134 where POV had 66 -- while the interior of the same solid
+        // agreed level for level.
+        float off = hitEps * 4.0;
+        for (uint g = 0u; g < 64u; ++g) {
+            if (abs(evalCsg(p + rd * off)) > hitEps) {
+                break;
+            }
+            off += hitEps * 2.0;
+        }
+        origin = p + rd * off;
     }
 
     if (!anyHit) {
