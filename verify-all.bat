@@ -63,6 +63,12 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    nothing AGPL in the tree
+    echo.
+    call "%HERE%licence-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    nothing sampled: the wear is still arithmetic on the field
     echo.
     call "%HERE%spike\notexture-check.bat"
