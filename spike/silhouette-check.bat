@@ -24,6 +24,10 @@ if not exist "%BIN%\render_scene.exe" (
 
 REM One pass writes both the mask and the .pov, from one camera. Deriving the camera twice is how
 REM a silhouette comparison ends up measuring a camera mismatch instead of the geometry.
+REM Last run first, same reason color-check gives: a mask left by a one-off check at
+REM another resolution would be compared against a fresh POV render and fail on size.
+del /q "%BIN%\mask_*.pov" "%BIN%\mask_*.bmp" "%BIN%\pov_mask_*.bmp" >nul 2>&1
+
 set SCENE_ARGS=
 for %%f in ("%SCENES%\*.makina.json") do set SCENE_ARGS=!SCENE_ARGS! "%%f"
 
