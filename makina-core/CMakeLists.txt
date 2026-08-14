@@ -91,7 +91,7 @@ target_link_libraries(makina_edit PRIVATE makina_core)
 
 foreach(t roundtrip sdf_compare measure_compare pov_compare bsp_compare edit_check command_check
           camera_check pick_check keymap_check transform_check material_check mesh_compare
-          pov_import_check blob_check
+          pov_import_check blob_check viewstate_check selection_check
           makina_edit makina_mesh makina_povin)
     if(MSVC)
         # /utf-8: sources are UTF-8 but MSVC otherwise assumes the ANSI code page.
@@ -99,6 +99,9 @@ foreach(t roundtrip sdf_compare measure_compare pov_compare bsp_compare edit_che
         # nlohmann/json is vendored third-party code; its warnings are not ours to fix.
         target_compile_options(${t} PRIVATE
             /external:I "${CMAKE_CURRENT_SOURCE_DIR}/external" /external:W0)
+        # A Scene is ~390 KB (Scene.hpp) and the import pipeline holds several live copies;
+        # the default 1 MB stack overflows, measured at the 8192-node trial size.
+        target_link_options(${t} PRIVATE /STACK:16777216)
     endif()
 endforeach()
 

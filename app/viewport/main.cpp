@@ -603,10 +603,11 @@ int main(int argc, char** argv) {
             interpretPso =
                 createPipeline(dev.device(), rootSig.Get(), readBinary(ivs), readBinary(ips));
 
-            // Sized for the largest program the scene format allows, because the previewed tree
-            // can be bigger than the committed one: moving a node that has no transform grows one.
+            // Sized for the largest program any scene can flatten to -- not kMaxNodes: a program
+            // outgrows its scene (an n-ary boolean becomes n-1 binary nodes), and RingBuffer::write
+            // clamps, so an undersized buffer would truncate the RPN and draw garbage silently.
             previewProgram = std::make_unique<RingBuffer>(
-                dev.device(), makina::Scene::kMaxNodes * sizeof(makina::EvalNode));
+                dev.device(), makina::kMaxProgramNodes * sizeof(makina::EvalNode));
         }
         std::printf("\n");
 

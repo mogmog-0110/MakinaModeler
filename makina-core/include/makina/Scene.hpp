@@ -173,9 +173,27 @@ struct SceneStorage {
     }
 };
 
-/// 256 nodes covers the largest real scene by a wide margin: pettobotoru.gsf, the biggest in the
-/// Grasp3D corpus, is 87 nodes (SCENE_FORMAT.md 5).
-using Scene = SceneStorage<256, 64, 32>;
+/// 4096 nodes: sized for import, not for hand editing. The Grasp3D corpus tops out at 87 nodes
+/// (pettobotoru.gsf, SCENE_FORMAT.md 5), but a real internet scene arrives far bigger -- the
+/// measured example is scene.pov, whose ice macros expand to 2285 nodes. 4096 is the next power
+/// of two above that measurement. Materials stay at 64: the same scene uses 7.
+///
+/// This makes a Scene about 390 KB, which changes what it is allowed to be: a heap or static
+/// citizen, never a stack local. Two copies in one call chain overflow a default 1 MB Windows
+/// stack, so every executable here links with /STACK:16MB -- measured, not guessed: the import
+/// pipeline holds 3-5 live copies and needed between 2 and 4 MB at the 8192-node trial size.
+///
+/// The engine is not bound to this number. SceneStorage is a template precisely so a rewind
+/// ring that snapshots per frame can instantiate a smaller storage and convert at the border;
+/// this alias is the authoring and interchange capacity, not a promise about GameMemory.
+using Scene = SceneStorage<4096, 64, 32>;
+
+/// The instantiation a per-frame rewind ring snapshots (about 28 KB; CSG_NODE.md 2.1). Held to
+/// the plan's 32 MB ring budget by tests/roundtrip.cpp. 256 nodes covers the largest hand-made
+/// scene by a wide margin: pettobotoru.gsf, the biggest in the Grasp3D corpus, is 87 nodes.
+/// A scene must fit this to ride in GameMemory; an imported giant stays an asset the engine
+/// references instead of snapshotting.
+using RewindScene = SceneStorage<256, 64, 32>;
 
 static_assert(std::is_trivially_copyable_v<Scene>,
               "Scene must be memcpy-able or the engine's rewind and replay cannot hold it");

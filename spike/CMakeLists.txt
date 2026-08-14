@@ -88,6 +88,9 @@ if(MSVC)
     target_compile_options(render_scene PRIVATE /W4 /permissive- /utf-8 /wd4324)
     target_compile_options(render_scene PRIVATE
         /external:I "${MAKINA_CORE_DIR}/external" /external:W0)
+    # A Scene is ~390 KB (Scene.hpp); the default 1 MB stack cannot hold the copies
+    # the load path makes.
+    target_link_options(render_scene PRIVATE /STACK:16777216)
 endif()
 
 # Asset import: generates the scene's shader and compiles it to DXIL once, so a runtime does not
@@ -105,6 +108,9 @@ if(MSVC)
     target_compile_options(makina_bake PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(makina_bake PRIVATE
         /external:I "${MAKINA_CORE_DIR}/external" /external:W0)
+    # A Scene is ~390 KB (Scene.hpp); the default 1 MB stack cannot hold the copies
+    # the load path makes.
+    target_link_options(makina_bake PRIVATE /STACK:16777216)
 endif()
 
 # No device and no shader: it only reads two BMPs, so it builds and runs anywhere.
@@ -124,4 +130,7 @@ if(MSVC)
     # /utf-8: sources are UTF-8 but MSVC otherwise assumes the ANSI code page (932 here) and
     # warns C4819. /wd4324 silences the expected padding from alignas(256) on the constant buffer.
     target_compile_options(spike PRIVATE /W4 /permissive- /utf-8 /wd4324)
+    # A Scene is ~390 KB (Scene.hpp); the default 1 MB stack cannot hold the copies
+    # the load path makes.
+    target_link_options(spike PRIVATE /STACK:16777216)
 endif()

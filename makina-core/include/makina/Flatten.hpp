@@ -26,6 +26,7 @@
 // them rather than restating them is what stops the two from drifting apart.
 #include "Eval.hpp"
 
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -126,6 +127,13 @@ struct EvalProgram {
     int maxStackDepth = 0;
     FlattenReport report;
 };
+
+/// The most EvalNodes any Scene can flatten to. A program is bigger than its scene: an n-ary
+/// boolean of k children becomes k-1 binary nodes (worst case, a root union of N-1 leaves,
+/// emits 2N-3), and a blob of k components becomes k leaves, k-1 BlobSum and one BlobFinish
+/// (2k nodes from k+1). Both stay under 2N. A GPU buffer sized by kMaxNodes instead of this
+/// gets silently truncated by the upload ring and the shader walks half an RPN.
+constexpr std::size_t kMaxProgramNodes = 2 * Scene::kMaxNodes;
 
 /// What EvalNode::pigmentId carries when a surface wears no pattern.
 ///
@@ -999,6 +1007,10 @@ inline EvalProgram flatten(const Scene& s) {
             out.maxStackDepth = depth;
         }
     }
+    // If this ever fires the 2N derivation at kMaxProgramNodes is wrong, and every GPU buffer
+    // sized by it is too small -- the failure downstream would be a truncated upload drawing
+    // garbage, which is far harder to trace back here.
+    assert(out.nodes.size() <= kMaxProgramNodes);
     return out;
 }
 

@@ -33,6 +33,9 @@ if(MSVC)
         "SHELL:/external:I ${MAKINA_CORE_DIR}/external"
         "SHELL:/external:I ${MITIRU_DIR}/include"
         /external:W0)
+    # A Scene is ~390 KB (Scene.hpp); the default 1 MB stack cannot hold the copies the load
+    # and edit paths make.
+    target_link_options(reflect_check PRIVATE /STACK:16777216)
 endif()
 
 # ---------------------------------------------------------------- keymap audit
@@ -92,6 +95,9 @@ if(WIN32 AND DXC_EXECUTABLE)
         target_compile_options(makina_viewport PRIVATE
             "SHELL:/external:I ${MAKINA_CORE_DIR}/external"
             /external:W0)
+        # A Scene is ~390 KB (Scene.hpp); the default 1 MB stack cannot hold the copies the
+        # load and edit paths make.
+        target_link_options(makina_viewport PRIVATE /STACK:16777216)
     endif()
 
     # ------------------------------------------------------------ the shell (CEF)
