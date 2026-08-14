@@ -170,20 +170,33 @@ public:
     /// Buttons only. Wheel is deliberately left to the viewport: the page has nothing that
     /// scrolls yet except the outliner, and taking the wheel away from dolly is the kind of
     /// change a modeller notices immediately.
-    [[nodiscard]] bool takePointer(int x, int y, bool left, bool middle, bool right) {
+    /// @param virtualKey a key held this frame, or 0 for none.
+    [[nodiscard]] bool takePointer(int x, int y, bool left, bool middle, bool right,
+                                   int virtualKey = 0) {
 #if defined(MITIRU_HAS_CEF)
         if (!m_running) {
             return false;
         }
+        // One beginFrame and one handleInput per frame, mouse and keys together. The engine
+        // derives every press and release from what changed since the previous beginFrame, so
+        // calling it twice in a frame makes the second call compare against the first's state
+        // and report edges that never happened.
         m_input.beginFrame();
         m_input.setMousePosition(static_cast<float>(x), static_cast<float>(y));
         m_input.setMouseButtonDown(mitiru::MouseButton::Left, left);
         m_input.setMouseButtonDown(mitiru::MouseButton::Middle, middle);
         m_input.setMouseButtonDown(mitiru::MouseButton::Right, right);
+        if (m_heldKey != 0 && m_heldKey != virtualKey) {
+            m_input.setKeyDown(m_heldKey, false);
+        }
+        if (virtualKey != 0) {
+            m_input.setKeyDown(virtualKey, true);
+        }
+        m_heldKey = virtualKey;
         m_ctx.handleInput(m_input);
         return m_ctx.pointerOverUi(x, y);
 #else
-        (void)x; (void)y; (void)left; (void)middle; (void)right;
+        (void)x; (void)y; (void)left; (void)middle; (void)right; (void)virtualKey;
         return false;
 #endif
     }
@@ -248,6 +261,9 @@ private:
     /// of it and the viewport has its own. Kept as a member rather than a local so the
     /// press-and-release edges beginFrame() derives survive between frames.
     mitiru::InputState                           m_input;
+    /// The key held on the previous frame, so it can be let go on this one. Without it a key
+    /// pressed once stays down for the rest of the run.
+    int                                          m_heldKey = 0;
     std::shared_ptr<mitiru::cef::StateStore>     m_store;
     /// The last value pushed per key, so an unchanged one is not pushed again.
     std::map<std::string, std::string>           m_last;

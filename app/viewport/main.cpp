@@ -22,6 +22,7 @@
 
 #include <makina/Bounds.hpp>
 #include <makina/Camera.hpp>
+#include <makina/Command.hpp>
 #include <makina/Edit.hpp>
 #include <makina/Flatten.hpp>
 #include <makina/Keymap.hpp>
@@ -42,6 +43,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -360,6 +362,13 @@ int main(int argc, char** argv) {
             }
             clickX = std::atoi(xy.substr(0, comma).c_str());
             clickY = std::atoi(xy.substr(comma + 1).c_str());
+        } else if (a == "--type" && i + 1 < argc) {
+            // Withdrawn. Sending keys to the page kills the process with STATUS_BREAKPOINT
+            // somewhere inside CEF, and the cause is not yet found -- see the task. Refused
+            // loudly rather than left to look available: a flag that crashes is worse than one
+            // that is not there, because the first thing it costs is trust in the checks.
+            std::fprintf(stderr, "--type is not available yet; it crashes the browser process\n");
+            return 2;
         } else if (a == "--no-shell") {
             // Starting a browser costs about a second and the scripted checks do sixteen runs.
             // It is a flag rather than something inferred from --keys, because a check that
@@ -603,6 +612,20 @@ int main(int argc, char** argv) {
             for (const std::string& action : makina::knownActions()) {
                 shell.accept(action);
             }
+            // And every parameter name any op has. A property field dispatches
+            // `input:<key>` -- the row rewrites its own data-m-input so the key rides in the
+            // name -- so the set of names to accept is exactly the set of names Op.hpp knows.
+            // Taken from opTable() rather than listed here, because a table that has to be
+            // updated alongside another table is a table that will not be.
+            {
+                int opCount = 0;
+                const makina::OpEntry* table = makina::opTable(opCount);
+                for (int i = 0; i < opCount; ++i) {
+                    for (int k = 0; k < 12 && table[i].keys[k] != nullptr; ++k) {
+                        shell.accept(std::string("input:") + table[i].keys[k]);
+                    }
+                }
+            }
         }
         // The camera from before the first axis snap, so "Genuine" has something to return
         // to. Written only when leaving the free camera, not every frame: while onAxis is
@@ -701,6 +724,37 @@ int main(int argc, char** argv) {
                             handled = true;
                         }
                     }
+                    // A number typed into the property panel. Straight through the command
+                    // layer, so the field and a script take the same road into the tree and
+                    // land in the history as one entry each.
+                    if (!handled && pendingAction.rfind("input:", 0) == 0 && !selection.empty()) {
+                        const std::string key = pendingAction.substr(6);
+                        nlohmann::json parsed = nlohmann::json::parse(pendingPayload, nullptr,
+                                                                      false);
+                        const std::string text =
+                            parsed.is_discarded() ? std::string()
+                                                  : parsed.value("value", std::string());
+                        char* end = nullptr;
+                        const double value = std::strtod(text.c_str(), &end);
+                        if (end != text.c_str() && *end == '\0') {
+                            const makina::CommandResult r = makina::runCommand(
+                                history, nlohmann::json{{"op", "set"},
+                                                        {"id", selection.back()},
+                                                        {key, value}});
+                            std::printf("%s\n", r.message.c_str());
+                            if (r.ok) {
+                                rebuild();
+                            }
+                            handled = true;
+                        } else {
+                            // Refused rather than guessed. strtod would read "3abc" as 3, and a
+                            // field that silently keeps half of what was typed is worse than one
+                            // that ignores it -- the number on screen would stop matching the
+                            // tree.
+                            std::printf("'%s' is not a number\n", text.c_str());
+                            handled = true;
+                        }
+                    }
                     if (!handled) {
                         in.keysPressed.push_back("@" + pendingAction);
                     }
@@ -734,6 +788,7 @@ int main(int argc, char** argv) {
                 in.leftDown = frame >= clickFrame + 3 && frame < clickFrame + 5;
                 in.leftPressed = frame == clickFrame + 3;
             }
+
 
             // The pointer, to the page. cursorU/V are [-0.5, 0.5] with V up, and CEF wants
             // pixels from the top left.
