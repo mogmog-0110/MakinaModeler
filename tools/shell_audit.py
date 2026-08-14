@@ -100,7 +100,7 @@ def repeat_blocks(html):
 
 # 値として path を取る属性。data-m-input は送信名であって状態の path ではないので入らない。
 # attr / style / tpl は文字列の中に {path} を書くので、取り出し方が違う。
-PLAIN_PATH = 'text|show|hide|tween|flash|toast|value|repeat'
+PLAIN_PATH = 'text|show|hide|tween|flash|toast|value|repeat|drag'
 BRACED_PATH = 'attr|style|tpl'
 
 
@@ -222,6 +222,9 @@ def main():
         # 選択肢に並べられてしまう。
         named = set(re.findall(r'data-m-action="([^"]*)"', html))
         named |= set(re.findall(r'<option value="([^"]*)"', html))
+        # data-m-drop も行動名を運ぶ。ここを見ないと、落とした先が知らない名前を
+        # dispatch していても検査は通る。
+        named |= set(re.findall(r'data-m-drop="([^"]*)"', html))
         for name in sorted(named):
             if name.startswith(SHARED_PREFIXES) and name not in actions:
                 bad += fail("the shell offers '%s', which is not a known action" % name)

@@ -127,6 +127,9 @@
   .node.is-selected { background: var(--sel-soft); }
   /* ミュートは削除ではない。木には残り、立体から出ているだけなので、消さずに薄くする。 */
   .node.is-muted { opacity: .45; font-style: italic; }
+  /* ドラッグ中の行と、落ち先の行。Grasp3D の DnDTree も落ち先を強調していた。 */
+  .node.m-dragging { opacity: .5; }
+  .node.m-drop-hover { outline: 2px solid var(--sel); outline-offset: -2px; }
   .node img { width: 16px; height: 16px; }
   .node .op { color: var(--ink-dim); }
 
@@ -237,6 +240,7 @@
         <div class="node"
              data-m-class="is-selected: selected; is-muted: muted"
              data-m-action="select.pick" data-m-arg="id"
+             data-m-drag="id" data-m-drop="edit.reparent"
              data-m-style="padding-left: {indent}px">
           <img data-m-attr="src: assets/icons/{icon}" alt="">
           <span data-m-text="name"></span>

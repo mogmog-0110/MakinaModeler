@@ -94,6 +94,9 @@ inline const std::vector<std::string>& knownActions() {
         "select.box",
         "edit.move",       "edit.rotate",      "edit.scale",
         "edit.duplicate",  "edit.delete",      "edit.toggleMute",
+        // Dragging a row onto another in the outliner. No key can express it, so no
+        // preset binds it; the shell rows carry it and keymap_audit counts them.
+        "edit.reparent",
         "edit.undo",       "edit.redo",
         "axis.x",          "axis.y",           "axis.z",
         "snap.hold",
@@ -124,6 +127,7 @@ inline const std::vector<std::pair<std::string, std::string>>& editCommands() {
         {"edit.duplicate", "duplicate"},
         {"edit.delete", "remove"},
         {"edit.toggleMute", "mute"},
+        {"edit.reparent", "move"},
         {"edit.undo", "undo"},
         {"edit.redo", "redo"},
     };

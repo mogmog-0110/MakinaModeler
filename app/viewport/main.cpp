@@ -310,6 +310,9 @@ int main(int argc, char** argv) {
     // tell us whether the toolbar is reachable at all.
     int  clickX = -1;
     int  clickY = -1;
+    // A drag to play: press at (x1,y1), glide, release at (x2,y2). The only way a scripted run
+    // can exercise the outliner's drag-and-drop -- a click cannot, by definition.
+    int  dragX1 = -1, dragY1 = -1, dragX2 = -1, dragY2 = -1;
     std::string typeText;
     // Which page to load. The shell by default; a probe when the question is about the
     // bridge itself rather than about the modeller.
@@ -374,6 +377,12 @@ int main(int argc, char** argv) {
             page = argv[++i];
         } else if (a == "--text" && i + 1 < argc) {
             typeText = argv[++i];
+        } else if (a == "--dragui" && i + 1 < argc) {
+            const std::string xy = argv[++i];
+            if (std::sscanf(xy.c_str(), "%d,%d,%d,%d", &dragX1, &dragY1, &dragX2, &dragY2) != 4) {
+                std::fprintf(stderr, "--dragui wants \"x1,y1,x2,y2\", got '%s'\n", xy.c_str());
+                return 2;
+            }
         } else if (a == "--no-shell") {
             // Starting a browser costs about a second and the scripted checks do sixteen runs.
             // It is a flag rather than something inferred from --keys, because a check that
@@ -395,7 +404,7 @@ int main(int argc, char** argv) {
                      "       [--frames N] [--screenshot <path>]\n"
                      "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n"
                      "       [--actions \"view.front view.genuine\"] [--dump-state <path>]\n"
-                     "       [--no-shell] [--click <x,y>]\n");
+                     "       [--no-shell] [--click <x,y>] [--dragui <x1,y1,x2,y2>]\n");
         return 2;
     }
 
@@ -801,6 +810,30 @@ int main(int argc, char** argv) {
                         }
                     }
 
+                    // A row dropped onto another in the outliner. The payload carries who
+                    // and where; the command layer's `move` does the rest, including refusing a
+                    // node dropped into its own subtree -- the page does not know the tree well
+                    // enough to be trusted with that rule, so it is not asked to enforce it.
+                    if (!handled && pendingAction == "edit.reparent") {
+                        nlohmann::json parsed = nlohmann::json::parse(pendingPayload, nullptr,
+                                                                      false);
+                        const std::uint32_t from =
+                            parsed.is_discarded() ? 0u : parsed.value("from", 0u);
+                        const std::uint32_t to =
+                            parsed.is_discarded() ? 0u : parsed.value("to", 0u);
+                        if (from != 0 && to != 0 && from != to) {
+                            const makina::CommandResult r = makina::runCommand(
+                                history, nlohmann::json{{"op", "move"},
+                                                        {"id", from},
+                                                        {"parent", to}});
+                            std::printf("%s\n", r.message.c_str());
+                            if (r.ok) {
+                                rebuild();
+                            }
+                        }
+                        handled = true;
+                    }
+
                     // A number typed into the property panel. Straight through the command
                     // layer, so the field and a script take the same road into the tree and
                     // land in the history as one entry each.
@@ -880,6 +913,28 @@ int main(int argc, char** argv) {
                     } else {
                         typedKey = VK_RETURN;
                     }
+                }
+            }
+
+            // The scripted drag: cursor to A, press, glide over eight frames, release at B.
+            // The glide is real frames rather than one jump because the binder's 4px threshold
+            // and its hover highlight both live on mousemove, and a drag that teleports would
+            // step over the exact code being exercised.
+            if (dragX1 >= 0 && clickFrame < 0 && shell.painted()) {
+                clickFrame = frame;
+            }
+            if (dragX1 >= 0 && clickFrame >= 0) {
+                // The same +20 the click path needed: the first paint is an empty shell, and
+                // the outliner rows only exist once the pushed state has arrived and rendered.
+                const int step = frame - (clickFrame + 20);
+                if (step >= 0 && step <= 10) {
+                    const double k = step <= 1 ? 0.0 : (step >= 9 ? 1.0 : (step - 1) / 8.0);
+                    const double px = dragX1 + (dragX2 - dragX1) * k;
+                    const double py = dragY1 + (dragY2 - dragY1) * k;
+                    in.cursorU = px / in.width - 0.5;
+                    in.cursorV = 0.5 - py / in.height;
+                    in.leftDown = step >= 1 && step < 10;
+                    in.leftPressed = step == 1;
                 }
             }
 
