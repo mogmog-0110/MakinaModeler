@@ -119,6 +119,22 @@ inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalNode& n
 
 }  // namespace detail
 
+/// Whether scene_interpret.hlsl can run this program.
+///
+/// A sor or a sphere_sweep carries its samples in a side table the interpreted pipeline has no
+/// buffer for, so a program holding one must use the generated shader -- the caller decides
+/// what that costs it (the viewport falls back to the committed picture during a drag). Blob
+/// travels whole in its nodes and interprets fine.
+inline bool interpretable(const makina::EvalProgram& prog) {
+    for (const makina::EvalNode& n : prog.nodes) {
+        const makina::EvalOp op = static_cast<makina::EvalOp>(n.op);
+        if (op == makina::EvalOp::Sor || op == makina::EvalOp::SphereSweep) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /// One helper per Sor node: its polyline as inlined constants and the cross-section distance,
 /// the same walk SorProfile.hpp does on the CPU. The mirror side is taken by index so only the
 /// right side is stored. Shared by both generated functions through the node index in the name.

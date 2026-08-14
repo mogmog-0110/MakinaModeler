@@ -484,6 +484,14 @@ int main(int argc, char** argv) {
                     std::printf("    wrote %s\n", povPath.c_str());
                 }
 
+                if (interpret && !spike::interpretable(prog)) {
+                    // The interpreted pipeline has no buffer for a sor's or a sweep's samples;
+                    // running it anyway would draw their nodes as planes. Skipping is the
+                    // honest answer until the side tables travel too.
+                    std::printf("    skipped: the program holds a sor or a sphere_sweep, which "
+                                "the interpreted pipeline cannot carry\n\n");
+                    continue;
+                }
                 const CompiledShader shader =
                     compileScene(prog, SPIKE_SHADER_DIR, MAKINA_CORE_INCLUDE, exeDir, tag, shading,
                                  interpret);

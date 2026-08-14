@@ -49,9 +49,27 @@ float evalCsg(float3 wp) {
     for (uint i = 0u; i < gProgramCount; ++i) {
         EvalNode n = gProgram[i];
 
+        if (n.op == 20u) {
+            // BlobFinish, the one unary op: field to distance, sharpened by the support box the
+            // node carries -- strictly outside only, the same guard evalBlobFinish keeps on the
+            // CPU (inside, the box term is zero or negative and must not pass through the max).
+            float field = stack[sp - 1];
+            float d = (n.params.x - field) / n.params.y * n.params.w;
+            if (n.params.z > 0.0) {
+                const float4 wq = float4(wp, 1.0);
+                const float3 q = float3(dot(n.inv0, wq), dot(n.inv1, wq), dot(n.inv2, wq));
+                float b = (max(max(abs(q.x), abs(q.y)), abs(q.z)) - 1.0) * n.params.z;
+                if (b > 0.0) {
+                    d = max(d, b);
+                }
+            }
+            stack[sp - 1] = d;
+            continue;
+        }
         if (n.op >= 16u) {
-            // Booleans. A malformed program would underflow here; the flattener guarantees it
-            // cannot, and checking per node in the inner loop would cost more than it protects.
+            // Booleans and BlobSum. A malformed program would underflow here; the flattener
+            // guarantees it cannot, and checking per node in the inner loop would cost more
+            // than it protects.
             float b = stack[sp - 1];
             float a = stack[sp - 2];
             sp -= 2;
@@ -60,6 +78,8 @@ float evalCsg(float3 wp) {
                 r = min(a, b);
             } else if (n.op == 17u) {
                 r = max(a, -b);
+            } else if (n.op == 19u) {
+                r = a + b;
             } else {
                 r = max(a, b);
             }
@@ -82,6 +102,11 @@ float evalCsg(float3 wp) {
             d = mkSdConeCentered(p.x, p.y * n.params.z, p.z, n.params.x, n.params.y);
         } else if (n.op == 4u) {
             d = mkSdTorus(p.x, p.y, p.z, n.params.x, n.params.y);
+        } else if (n.op == 6u) {
+            // Densities, not distances; their params.w is 1, so the shared tail stays shared.
+            d = mkBlobSphereDensity(p.x, p.y, p.z, n.params.x, n.params.y);
+        } else if (n.op == 7u) {
+            d = mkBlobCylinderDensity(p.x, p.y, p.z, n.params.x, n.params.y, n.params.z);
         } else {
             d = mkSdPlane(p.y, 0.0);
         }
@@ -119,6 +144,24 @@ float3 evalCsgMaterial(float3 wp) {
     for (uint i = 0u; i < gProgramCount; ++i) {
         EvalNode n = gProgram[i];
 
+        if (n.op == 20u) {
+            // The whole blob is one surface, and the finish node is what wears its material --
+            // the density leaves below it never win a comparison.
+            float field = stack[sp - 1];
+            float d = (n.params.x - field) / n.params.y * n.params.w;
+            if (n.params.z > 0.0) {
+                const float4 wq = float4(wp, 1.0);
+                const float3 q = float3(dot(n.inv0, wq), dot(n.inv1, wq), dot(n.inv2, wq));
+                float b = (max(max(abs(q.x), abs(q.y)), abs(q.z)) - 1.0) * n.params.z;
+                if (b > 0.0) {
+                    d = max(d, b);
+                }
+            }
+            stack[sp - 1] = d;
+            ids[sp - 1] = (float)n.materialId;
+            pigs[sp - 1] = n.pigmentId == 0xFFFFFFFFu ? -1.0 : (float)n.pigmentId;
+            continue;
+        }
         if (n.op >= 16u) {
             float b = stack[sp - 1];
             float a = stack[sp - 2];
@@ -136,6 +179,11 @@ float3 evalCsgMaterial(float3 wp) {
                 pg = a < b ? ga : gb;
             } else if (n.op == 17u) {
                 r = max(a, -b);
+                id = ia;
+                pg = ga;
+            } else if (n.op == 19u) {
+                // Densities summing on their way to a BlobFinish; no surface yet, no material.
+                r = a + b;
                 id = ia;
                 pg = ga;
             } else {

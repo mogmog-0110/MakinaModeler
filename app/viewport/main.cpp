@@ -1451,10 +1451,14 @@ int main(int argc, char** argv) {
             dev.begin(clear);
             ID3D12GraphicsCommandList* cl = dev.list();
             cl->SetGraphicsRootSignature(rootSig.Get());
-            cl->SetPipelineState(previewing ? interpretPso.Get() : pso.Get());
+            // A sor or a sphere_sweep cannot ride the interpreted pipeline (its samples live in
+            // a side table the buffer does not carry), so a drag over such a scene shows the
+            // committed picture until it ends -- stale for a moment, never wrong.
+            const bool interpretedFrame = previewing && spike::interpretable(previewProg);
+            cl->SetPipelineState(interpretedFrame ? interpretPso.Get() : pso.Get());
             cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             cl->SetGraphicsRootConstantBufferView(0, cbAddress);
-            if (previewing) {
+            if (interpretedFrame) {
                 const std::size_t bytes = previewProg.nodes.size() * sizeof(makina::EvalNode);
                 cl->SetGraphicsRootShaderResourceView(
                     1, previewProgram->write(previewProg.nodes.data(), bytes));
