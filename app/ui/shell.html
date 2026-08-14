@@ -145,6 +145,10 @@
     height: 20px; font: inherit; text-align: right;
     border: 1px solid var(--line); border-radius: 3px; background: #fff; padding: 0 4px;
   }
+  /* 編集中の欄が分かること。Grasp3D の数値欄は Swing の既定でフォーカス枠が出ていたし、
+     どこに打ち込んでいるか分からない入力欄は、打ち込んだ数字がどこへ行ったか分からない
+     入力欄である。 */
+  .row input:focus { outline: none; border-color: var(--sel); background: #fffbe6; }
 
   /* ---------------------------------------------------------------- status */
   .status {
