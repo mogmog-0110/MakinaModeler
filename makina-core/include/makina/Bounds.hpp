@@ -209,6 +209,22 @@ inline int localCorners(const CsgNode& n, double out[8][3]) {
             x1 = -q[0]; y1 = 0.0; z1 = -q[0];
             x2 = q[0];  y2 = 0.0; z2 = q[0];
             break;
+        // Blob components: the box of the support, outside which the density is exactly zero.
+        // The blended surface can bulge past one component but never past its support.
+        case Op::BlobSphere:
+            x1 = q[0] - q[3]; y1 = q[1] - q[3]; z1 = q[2] - q[3];
+            x2 = q[0] + q[3]; y2 = q[1] + q[3]; z2 = q[2] + q[3];
+            break;
+        case Op::BlobCylinder: {
+            const double r = q[6];
+            x1 = (q[0] < q[3] ? q[0] : q[3]) - r;
+            y1 = (q[1] < q[4] ? q[1] : q[4]) - r;
+            z1 = (q[2] < q[5] ? q[2] : q[5]) - r;
+            x2 = (q[0] > q[3] ? q[0] : q[3]) + r;
+            y2 = (q[1] > q[4] ? q[1] : q[4]) + r;
+            z2 = (q[2] > q[5] ? q[2] : q[5]) + r;
+            break;
+        }
         case Op::Triangle:
             out[0][0] = q[0]; out[0][1] = q[1]; out[0][2] = q[2];
             out[1][0] = q[3]; out[1][1] = q[4]; out[1][2] = q[5];
@@ -296,7 +312,7 @@ inline Aabb subtreeBounds(const Scene& s, std::uint16_t index, const Mat4& m, in
     }
 
     Aabb own = emptyAabb();
-    if (isPrimitive(op)) {
+    if (isPrimitive(op) || isBlobComponent(op)) {
         double pts[8][3];
         const int count = localCorners(n, pts);
         if (count > 0) {

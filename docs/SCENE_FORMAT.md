@@ -123,6 +123,18 @@ Grasp3D の `.gsf` へ書き戻す経路は**作らない**。
 | `Difference` | `children[0]` から `children[1..]` の**和**を引く |
 | `Intersection` | `children` 全部の積 |
 
+### 3.3b フィールド（POV の blob 由来）
+
+| `op` | パラメータ | 意味 |
+|---|---|---|
+| `Blob` | `threshold` | `children` は**成分**であり和集合の要素ではない。各成分の密度の合計が threshold を横切る所が表面 |
+| `BlobSphere` | `x`,`y`,`z`,`radius`,`strength` | 密度 `strength·(1−(r/R)²)²`（r ≥ R で 0） |
+| `BlobCylinder` | `x1`..`z2`, `radius`, `strength` | 距離は線分まで（サポートはカプセル）。falloff は球成分と同じ |
+
+成分は変換ノードの下に置ける（成分ごとの `scale` は POV がそう書くため）。
+`Blob` の外に置かれた成分は評価に寄与しない（Eval.hpp が空を返す）。
+Grasp3D には存在しない語彙で、`.gsf` からは決して生成されない。POV インポートと手書きだけが作る。
+
 ### 3.4 綴りの訂正
 
 Grasp3D のキー `"Shinness "` は**綴り誤り**。JSON では **`shininess`** に訂正する。

@@ -37,6 +37,13 @@ enum class Op : std::uint8_t {
     Merge        = 64,
     Difference   = 65,
     Intersection = 66,
+
+    // Fields (POV's blob). A Blob's children are components, not union members: each adds a
+    // density that falls off with distance, and the surface is where the sum crosses the
+    // threshold. Components may sit under transform nodes; a component outside a Blob is inert.
+    Blob         = 80,
+    BlobSphere   = 81,
+    BlobCylinder = 82,
 };
 
 inline bool isPrimitive(Op op) {
@@ -49,6 +56,10 @@ inline bool isTransform(Op op) {
 
 inline bool isBoolean(Op op) {
     return op >= Op::Merge && op <= Op::Intersection;
+}
+
+inline bool isBlobComponent(Op op) {
+    return op == Op::BlobSphere || op == Op::BlobCylinder;
 }
 
 // ---------------------------------------------------------------- flags
@@ -114,6 +125,11 @@ inline const OpEntry* opTable(int& count) {
         {Op::Merge,        "Merge",        {nullptr}},
         {Op::Difference,   "Difference",   {nullptr}},
         {Op::Intersection, "Intersection", {nullptr}},
+
+        {Op::Blob,         "Blob",         {"threshold", nullptr}},
+        {Op::BlobSphere,   "BlobSphere",   {"x", "y", "z", "radius", "strength", nullptr}},
+        {Op::BlobCylinder, "BlobCylinder", {"x1", "y1", "z1", "x2", "y2", "z2",
+                                            "radius", "strength", nullptr}},
     };
     count = static_cast<int>(sizeof(table) / sizeof(table[0]));
     return table;

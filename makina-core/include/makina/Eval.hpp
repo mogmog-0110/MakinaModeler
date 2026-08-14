@@ -202,12 +202,129 @@ inline double evalIntersection(const Scene& s, std::uint16_t index, const double
     return any ? d : kEmpty;
 }
 
+// ------------------------------------------------------------------- blob field
+
+/// What one walk over a Blob's components gathers at a point.
+struct BlobTerms {
+    double field = 0.0;      ///< sum of the component densities
+    double lipschitz = 0.0;  ///< bound on |grad field| in blob space; the field/distance bridge
+    double support = kEmpty; ///< distance to the nearest component support, never negative
+};
+
+/// POV's component density: strength * (1 - (r/R)^2)^2 inside the support, 0 at and beyond R.
+/// The falloff is from the public reference; the renders are compared against POV to keep it so.
+inline double blobDensity(double r2, double radius, double strength) {
+    const double R2 = radius * radius;
+    if (R2 <= 0.0 || r2 >= R2) {
+        return 0.0;
+    }
+    const double u = 1.0 - r2 / R2;
+    return strength * u * u;
+}
+
+/// Largest |d density / d r| of one component: 8*sqrt(3)/9 * |strength| / R, at r = R/sqrt(3).
+inline double blobLipschitz(double radius, double strength) {
+    return radius <= 0.0 ? 0.0 : 1.5396007178390020 * std::fabs(strength) / radius;
+}
+
+/// Distance squared from p to the segment a..b -- a blob cylinder's support is a capsule.
+inline double segmentDistSq(const double p[3], const float* a, const float* b) {
+    const double ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    const double wx = p[0] - a[0], wy = p[1] - a[1], wz = p[2] - a[2];
+    const double uu = ux * ux + uy * uy + uz * uz;
+    double t = uu > 0.0 ? (wx * ux + wy * uy + wz * uz) / uu : 0.0;
+    t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+    const double dx = wx - t * ux, dy = wy - t * uy, dz = wz - t * uz;
+    return dx * dx + dy * dy + dz * dz;
+}
+
+/// Adds one subtree's components to t. minScale carries the smallest axis factor of the
+/// transforms crossed so far: dividing space by it stretches the field's gradient, so the
+/// Lipschitz bound divides by it and the support distance multiplies, both erring safe.
+inline void accumBlob(const Scene& s, std::uint16_t index, const double p[3], double minScale,
+                      BlobTerms& t) {
+    const CsgNode& n = s.nodes[index];
+    const Op op = static_cast<Op>(n.op);
+
+    if (isTransform(op)) {
+        double q[3];
+        invApply(n, p, q);
+        const double k = minScale * scaleFactorOf(n);
+        for (std::uint16_t i = 0; i < n.childCount; ++i) {
+            accumBlob(s, static_cast<std::uint16_t>(n.firstChild + i), q, k, t);
+        }
+        return;
+    }
+
+    if (op == Op::BlobSphere || op == Op::BlobCylinder) {
+        const float* q = n.params;
+        double r2;
+        double radius;
+        double strength;
+        if (op == Op::BlobSphere) {
+            const double dx = p[0] - q[0], dy = p[1] - q[1], dz = p[2] - q[2];
+            r2 = dx * dx + dy * dy + dz * dz;
+            radius = q[3];
+            strength = q[4];
+        } else {
+            r2 = segmentDistSq(p, q, q + 3);
+            radius = q[6];
+            strength = q[7];
+        }
+        t.field += blobDensity(r2, radius, strength);
+        t.lipschitz += blobLipschitz(radius, strength) / nz(minScale);
+        const double sup = (std::sqrt(r2) - radius) * minScale;
+        const double clamped = sup > 0.0 ? sup : 0.0;
+        if (clamped < t.support) {
+            t.support = clamped;
+        }
+        return;
+    }
+
+    // A Label or anything else structural: its children may still be components.
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        accumBlob(s, static_cast<std::uint16_t>(n.firstChild + i), p, minScale, t);
+    }
+}
+
+/// The blob's distance estimate: (threshold - field) / Lipschitz, sharpened by the distance to
+/// the union of supports, which the surface cannot leave. Both are lower bounds on the true
+/// distance, so the larger one is the better step -- and both keep the sign convention exact,
+/// since field > threshold is the inside by definition.
+inline double evalBlob(const Scene& s, std::uint16_t index, const double p[3], double scale) {
+    const CsgNode& n = s.nodes[index];
+    BlobTerms t;
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        accumBlob(s, static_cast<std::uint16_t>(n.firstChild + i), p, 1.0, t);
+    }
+    if (t.lipschitz <= 0.0) {
+        return kEmpty;
+    }
+    double d = (static_cast<double>(n.params[0]) - t.field) / t.lipschitz;
+    // Only strictly outside every support: there the field is zero and the surface cannot be
+    // nearer than the supports are. Inside the union the support distance is zero, and letting a
+    // zero through the max would erase the negative interior distance.
+    if (!isEmpty(t.support) && t.support > 0.0 && t.support > d) {
+        d = t.support;
+    }
+    return d * scale;
+}
+
 inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], double scale,
                        Fidelity f) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
 
     if (!f.labelsAreGeometry && op == Op::Label) {
+        return kEmpty;
+    }
+
+    if (op == Op::Blob) {
+        return evalBlob(s, index, p, scale);
+    }
+    // A component contributes through its Blob's field walk and nowhere else: evaluated on its
+    // own it would put a second, un-blended surface where the blob already has one.
+    if (isBlobComponent(op)) {
         return kEmpty;
     }
 
