@@ -742,7 +742,12 @@ Phase 1 で BSP と POV 出力は既に実装済みなので、**比較ハーネ
 3. 既存の物理・ライティングとの統合（SDF は衝突判定にそのまま使える）
 
 **完了条件**:
-- [ ] Makina で作ったモデルが、エンジンのサンプルゲーム内で動く
+- [x] Makina で作ったモデルが、エンジンのサンプルゲーム内で動く — `examples/csg_solid` 章。
+      `s.drawSolid("...csgbake.json", pos, rotY, scale)` の 1 行で、hero_flange が
+      エンジンのメッシュと同じフレームに出る。深度も画素で確認した — 床のスラブに
+      沈めると床下の部分だけが消える（CSG はメッシュの後に描かれるので、描画順では
+      説明できない）。配管は Screen::drawSolid → IRenderer3D → renderCsgPass
+      (clod の直後・OIT の前、MSAA HDR + depth)
 - [x] **モデラーとエンジンで絵が一致** — golden ではなく **CPU の距離場との一致**で確かめた
       （13,311 画素すべて一致）。golden は「前と同じか」しか言えず、
       最初から間違っていれば間違ったまま固定される
