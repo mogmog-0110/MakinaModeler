@@ -284,6 +284,10 @@ private:
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Unbuffered, because the interesting runs are the ones that die. Piped stdout is
+    // block-buffered, so a crash takes the last few thousand characters with it -- which
+    // is exactly the part that says what the program was doing.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::string scenePath;
     std::string keymapName = "maya";
     // A window cannot be looked at by anything automated, so "it built and did not crash" would
@@ -306,6 +310,7 @@ int main(int argc, char** argv) {
     // tell us whether the toolbar is reachable at all.
     int  clickX = -1;
     int  clickY = -1;
+    std::string typeText;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keymap" && i + 1 < argc) {
@@ -362,13 +367,8 @@ int main(int argc, char** argv) {
             }
             clickX = std::atoi(xy.substr(0, comma).c_str());
             clickY = std::atoi(xy.substr(comma + 1).c_str());
-        } else if (a == "--type" && i + 1 < argc) {
-            // Withdrawn. Sending keys to the page kills the process with STATUS_BREAKPOINT
-            // somewhere inside CEF, and the cause is not yet found -- see the task. Refused
-            // loudly rather than left to look available: a flag that crashes is worse than one
-            // that is not there, because the first thing it costs is trust in the checks.
-            std::fprintf(stderr, "--type is not available yet; it crashes the browser process\n");
-            return 2;
+        } else if (a == "--text" && i + 1 < argc) {
+            typeText = argv[++i];
         } else if (a == "--no-shell") {
             // Starting a browser costs about a second and the scripted checks do sixteen runs.
             // It is a flag rather than something inferred from --keys, because a check that
@@ -776,8 +776,8 @@ int main(int argc, char** argv) {
                 // fixed frame number would make this check pass or fail by machine speed.
                 clickFrame = frame;
             }
-            if (clickX >= 0 && clickFrame >= 0 && frame >= clickFrame + 2 &&
-                frame <= clickFrame + 5) {
+            if (clickX >= 0 && clickFrame >= 0 && frame >= clickFrame + 20 &&
+                frame <= clickFrame + 23) {
                 in.cursorU = static_cast<double>(clickX) / in.width - 0.5;
                 in.cursorV = 0.5 - static_cast<double>(clickY) / in.height;
                 // The cursor arrives on a frame of its own before the button goes down. Who owns
@@ -785,10 +785,26 @@ int main(int argc, char** argv) {
                 // pressed in the same frame would be judged against wherever the real mouse was
                 // sitting -- which is how the first attempt at this managed to clear the
                 // selection instead of pressing the button under the cursor.
-                in.leftDown = frame >= clickFrame + 3 && frame < clickFrame + 5;
-                in.leftPressed = frame == clickFrame + 3;
+                in.leftDown = frame >= clickFrame + 21 && frame < clickFrame + 23;
+                in.leftPressed = frame == clickFrame + 21;
             }
 
+
+            int typedKey = 0;
+            if (!typeText.empty() && clickFrame >= 0) {
+                const int step = frame - (clickFrame + 30);
+                const int at = step / 2;
+                if (step >= 0 && (step % 2) == 0 && at <= static_cast<int>(typeText.size())) {
+                    if (at < static_cast<int>(typeText.size())) {
+                        const char c = typeText[static_cast<std::size_t>(at)];
+                        typedKey = c == '.'   ? VK_OEM_PERIOD
+                                   : c == '-' ? VK_OEM_MINUS
+                                              : std::toupper(static_cast<unsigned char>(c));
+                    } else {
+                        typedKey = VK_RETURN;
+                    }
+                }
+            }
 
             // The pointer, to the page. cursorU/V are [-0.5, 0.5] with V up, and CEF wants
             // pixels from the top left.
@@ -797,9 +813,9 @@ int main(int argc, char** argv) {
                 const int py = static_cast<int>((0.5 - in.cursorV) * in.height);
                 const bool anyDown = in.leftDown || in.middleDown || in.rightDown;
                 if (!anyDown) {
-                    shellOwnsPointer = shell.takePointer(px, py, false, false, false);
+                    shellOwnsPointer = shell.takePointer(px, py, false, false, false, typedKey);
                 } else if (shellOwnsPointer) {
-                    shell.takePointer(px, py, in.leftDown, in.middleDown, in.rightDown);
+                    shell.takePointer(px, py, in.leftDown, in.middleDown, in.rightDown, typedKey);
                 }
                 // When the viewport owns the drag the page is told nothing at all. Forwarding a
                 // drag it never saw begin would leave a button of its own stuck down.
