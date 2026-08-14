@@ -89,6 +89,7 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"gradient", PovStatus::Supported, ""},
         {"radial", PovStatus::Supported, ""},
         {"interior", PovStatus::Supported, "ior"},
+        {"blob", PovStatus::Supported, "sphere and cylinder components"},
         {"camera", PovStatus::Supported, "perspective / orthographic / fisheye / ultra_wide_angle / panoramic"},
         {"light_source", PovStatus::Supported, "point lights; softness is out of scope by policy"},
         // Language the reader evaluates.
@@ -107,7 +108,6 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"sor", PovStatus::UnsupportedShape, "a spline revolved about an axis"},
         {"lathe", PovStatus::UnsupportedShape, "a spline revolved about an axis"},
         {"prism", PovStatus::UnsupportedShape, "a spline swept along an axis"},
-        {"blob", PovStatus::UnsupportedShape, "a field of blended spheres"},
         {"sphere_sweep", PovStatus::UnsupportedShape, "a sphere dragged along a spline"},
         {"superellipsoid", PovStatus::UnsupportedShape, "an implicit surface with two exponents"},
         {"isosurface", PovStatus::UnsupportedShape, "an implicit surface given by a function"},

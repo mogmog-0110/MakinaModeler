@@ -382,7 +382,6 @@ void boundaries() {
     // word would otherwise reach the expression parser and be reported as not being a number,
     // which says where the parser was rather than what the file asked for.
     refuses("#declare S = sor { 3, <0,0>,<1,1>,<0,2> }", "revolved about an axis");
-    refuses("union{ blob { sphere{<0,0,0>,1,1} } }", "blended spheres");
     refuses("isosurface { function { x*x } }", "given by a function");
     refuses("sphere{<0,0,0>,rand(R)}", "is a function call");
     refuses("box{<0,0,0>,<1,1,1> scale <0,1,1>}", "collapses");
@@ -542,6 +541,77 @@ void macroExpansion() {
     refuses("#macro F() sphere{<0,0,0>,1}", "not closed with #end");
 }
 
+/// blob: reading, the field it evaluates to, and the write/read round trip.
+///
+/// The geometry oracle is the same closed form blob_check uses: with threshold 0.5625 and
+/// strength 1 a component's surface sits at r* = 0.5 exactly, so a misread threshold, radius,
+/// strength or component transform all move a number this can see.
+void blobImport() {
+    std::printf("blob reads, evaluates, and round-trips\n");
+    const double rStar = 0.5;
+
+    const std::string src =
+        "#declare B = blob {\n"
+        "  threshold 0.5625\n"
+        "  sphere { <0,0,0>, 1, 1 scale <1,0.5,0.5> }\n"
+        "  cylinder { <6,-0.5,0>, <6,0.5,0>, 1 strength 1 }\n"
+        "}\n"
+        "object { B translate <0,2,0> }\n";
+    const auto at = [](const makina::Scene& s, double x, double y, double z) {
+        const double p[3] = {x, y, z};
+        return makina::eval(s, p);
+    };
+
+    try {
+        const makina::PovImportResult r = makina::importPov(src);
+        check(r.unsupported.empty(), "the blob should read whole");
+        check(std::fabs(at(r.scene, rStar, 2, 0)) < 1e-6,
+              "the sphere component's surface should sit at r* along the unscaled axis");
+        check(at(r.scene, 0, 2, 0) < 0.0, "the sphere component's center should be inside");
+        check(std::fabs(at(r.scene, 6.0 + rStar, 2, 0)) < 1e-6,
+              "the cylinder component's surface should sit r* off the axis");
+
+        makina::PovOptions opt;
+        const makina::PovImportResult back = makina::importPov(makina::writePov(r.scene, opt));
+        // The exporter always writes a camera and the reader always reports the frame; anything
+        // beyond that one line is a real loss.
+        std::string lost;
+        for (const std::string& u : back.unsupported) {
+            if (u != "camera") {
+                lost += " [" + u + "]";
+            }
+        }
+        check(lost.empty(), "the exported blob should read back whole, not report" + lost);
+        const double pts[4][3] = {{rStar, 2, 0}, {0, 2, 0}, {6.0 + rStar, 2, 0}, {1.5, 2, 0}};
+        for (const double* p : pts) {
+            check(std::fabs(at(r.scene, p[0], p[1], p[2]) - at(back.scene, p[0], p[1], p[2])) <
+                      1e-6,
+                  "the round-tripped blob evaluates differently");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the blob was refused: ") + e.what());
+    }
+
+    // Left out, the threshold is POV's default 1.0: strength 2 then puts r* at
+    // sqrt(1 - sqrt(1/2)).
+    try {
+        const makina::PovImportResult d = makina::importPov("blob { sphere{<0,0,0>,1,2} }");
+        const double rDefault = std::sqrt(1.0 - std::sqrt(0.5));
+        check(std::fabs(at(d.scene, rDefault, 0, 0)) < 1e-6,
+              "the default threshold should be 1.0");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the default-threshold blob was refused: ") + e.what());
+    }
+
+    // An unknown word must refuse, not skip: a component skipped as "some modifier" would load a
+    // solid with a lump missing.
+    refuses("blob { threshold 0.5 hierarchy off sphere{<0,0,0>,1,1} }", "inside a blob");
+    refuses("blob { sphere{<0,0,0>,1,1 hollow} }", "on a blob component");
+    refuses("blob { sphere{<0,0,0>,-1,1} }", "positive radius");
+    notes("blob { sphere{<0,0,0>,1,1 texture{pigment{color rgb<1,0,0>}}} }",
+          "blob component texture");
+}
+
 /// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
 ///
 /// The two spellings reach the material through different code paths (a flat pigment reads its
@@ -584,6 +654,7 @@ int main(int argc, char** argv) {
     try {
         boundaries();
         macroExpansion();
+        blobImport();
         srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

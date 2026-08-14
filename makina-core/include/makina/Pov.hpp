@@ -256,7 +256,7 @@ inline std::string povTransform(const CsgNode& n) {
 inline int countPovObjects(const Scene& s, std::uint16_t index) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
-    if (isBoolean(op)) {
+    if (isBoolean(op) || op == Op::Blob) {
         return 1;
     }
     int count = isPrimitive(op) ? 1 : 0;
@@ -270,7 +270,8 @@ inline int countPovObjects(const Scene& s, std::uint16_t index) {
 /// comes out the color of the side being cut. Empty when the subtree has no primitive.
 inline std::string bodyMaterial(const Scene& s, std::uint16_t index, bool silhouette) {
     const CsgNode& n = s.nodes[index];
-    if (isPrimitive(static_cast<Op>(n.op))) {
+    const Op op = static_cast<Op>(n.op);
+    if (isPrimitive(op) || op == Op::Blob) {
         return povMaterial(s, n, silhouette);
     }
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
@@ -328,6 +329,44 @@ inline std::string swapMaterial(const std::string& block, const std::string& mat
     return out;
 }
 
+/// Blob components, deepest transform written first -- POV applies component modifiers top to
+/// bottom, and the transform nearest the component has to act first, same rule povSubtree uses.
+inline std::string povBlobParts(const Scene& s, std::uint16_t index, const std::string& mods) {
+    const CsgNode& n = s.nodes[index];
+    const Op op = static_cast<Op>(n.op);
+    const float* q = n.params;
+
+    if (op == Op::BlobSphere) {
+        return "\tsphere{" + vec3(q[0], q[1], q[2]) + "," + num(q[3]) + "," + num(q[4]) + "\n" +
+               mods + "\t}\n";
+    }
+    if (op == Op::BlobCylinder) {
+        return "\tcylinder{" + vec3(q[0], q[1], q[2]) + "," + vec3(q[3], q[4], q[5]) + "," +
+               num(q[6]) + "," + num(q[7]) + "\n" + mods + "\t}\n";
+    }
+
+    const std::string inner = isTransform(op) ? "\t" + povTransform(n) + mods : mods;
+    std::string out;
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        out += povBlobParts(s, static_cast<std::uint16_t>(n.firstChild + i), inner);
+    }
+    return out;
+}
+
+/// One `blob { ... }` block: threshold, components, then the blob's own dress and placement.
+inline std::string povBlob(const Scene& s, std::uint16_t index, const std::string& transform,
+                           bool silhouette) {
+    const CsgNode& n = s.nodes[index];
+    std::string out = "blob{\n\tthreshold " + num(n.params[0]) + "\n";
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        out += povBlobParts(s, static_cast<std::uint16_t>(n.firstChild + i), std::string());
+    }
+    out += povMaterial(s, n, silhouette);
+    out += transform;
+    out += "}\n\n";
+    return out;
+}
+
 /// One subtree.
 ///
 /// `transform` is the block accumulated from the ancestors, `inCsg` says whether a face has to be
@@ -337,6 +376,12 @@ inline std::string povSubtree(const Scene& s, std::uint16_t index, const std::st
                               bool inCsg, bool silhouette) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
+
+    // Whole in one hand: the children are components, not objects, so the generic child walk
+    // below must not see them.
+    if (op == Op::Blob) {
+        return povBlob(s, index, transform, silhouette);
+    }
 
     // A transform prepends to the block, so the outermost transform is applied last -- POV reads
     // them top to bottom and the innermost has to act first.

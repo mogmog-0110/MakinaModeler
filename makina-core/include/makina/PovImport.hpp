@@ -418,7 +418,6 @@ private:
             {"sor",            "a spline revolved about an axis"},
             {"lathe",          "a spline revolved about an axis"},
             {"prism",          "a spline swept along an axis"},
-            {"blob",           "a field of blended spheres"},
             {"sphere_sweep",   "a sphere dragged along a spline"},
             {"superellipsoid", "an implicit surface with two exponents"},
             {"isosurface",     "an implicit surface given by a function"},
@@ -454,7 +453,7 @@ private:
         static const char* kStarts[] = {"sphere",     "box",          "cylinder", "cone",
                                         "torus",      "plane",        "disc",     "triangle",
                                         "union",      "merge",        "difference",
-                                        "intersection", "object"};
+                                        "intersection", "object",     "blob"};
         for (const char* s : kStarts) {
             if (isWord(s)) {
                 return true;
@@ -1072,6 +1071,7 @@ private:
             return boolean();
         }
         if (isWord("object")) { return instance(); }
+        if (isWord("blob"))   { return readBlob(); }
         refuse("'" + peek().text + "' does not begin an object");
     }
 
@@ -1392,6 +1392,169 @@ private:
         return modifiers(PovNode(it->second));
     }
 
+    /// `blob { threshold T sphere{...} cylinder{...} ... }`.
+    ///
+    /// Handled with its own loop rather than modifiers(), because POV lets components and
+    /// modifiers interleave and an unknown word here has to refuse: a component skipped as "some
+    /// modifier" would load a solid with a lump missing, which no report line makes acceptable.
+    PovNode readBlob() {
+        take();
+        expectPunct('{');
+        PovNode node = leaf(Op::Blob, "Blob");
+        node.params[0] = 1.0f;   // POV's default threshold (public reference, 3.7)
+        Material appearance = defaultAppearance();
+        bool dressed = false;
+
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("a blob block was not closed");
+            }
+            // Through shapeOf: a transform modifier may already have wrapped the Blob node.
+            if (isWord("threshold")) {
+                take();
+                shapeOf(node).params[0] = static_cast<float>(number());
+                continue;
+            }
+            if (isWord("sphere") || isWord("cylinder")) {
+                shapeOf(node).children.push_back(blobComponent());
+                continue;
+            }
+            if (modifierStep(node, appearance, dressed)) {
+                continue;
+            }
+            refuse("'" + peek().text + "' inside a blob is not something this reader knows");
+        }
+        take();
+        if (dressed) {
+            shapeOf(node).material = materialIndex(appearance);
+        }
+        return node;
+    }
+
+    /// One blob component: `sphere { <c>, R [, [strength] S] mods }` or
+    /// `cylinder { <a>, <b>, R [, [strength] S] mods }`. Transform modifiers wrap the component
+    /// the same way they wrap an object; the field walk in Eval.hpp undoes them per component.
+    PovNode blobComponent() {
+        const bool isSphere = peek().text == "sphere";
+        take();
+        expectPunct('{');
+        PovNode c = leaf(isSphere ? Op::BlobSphere : Op::BlobCylinder,
+                         isSphere ? "BlobSphere" : "BlobCylinder");
+        double v[3];
+        vector3(v);
+        int at = 0;
+        for (int i = 0; i < 3; ++i) {
+            c.params[at++] = static_cast<float>(v[i]);
+        }
+        if (!isSphere) {
+            expectPunct(',');
+            vector3(v);
+            for (int i = 0; i < 3; ++i) {
+                c.params[at++] = static_cast<float>(v[i]);
+            }
+        }
+        expectPunct(',');
+        const double radius = number();
+        if (radius <= 0.0) {
+            refuse("a blob component needs a positive radius");
+        }
+        // The strength and its optional keyword. Left out, POV takes 1.0.
+        double strength = 1.0;
+        if (isPunct(',') || isWord("strength")) {
+            if (isPunct(',')) {
+                take();
+            }
+            if (isWord("strength")) {
+                take();
+            }
+            strength = number();
+        }
+        c.params[at++] = static_cast<float>(radius);
+        c.params[at] = static_cast<float>(strength);
+
+        PovNode out = std::move(c);
+        while (!isPunct('}')) {
+            if (peek().kind == PovTokenKind::End) {
+                refuse("a blob component was not closed");
+            }
+            if (isWord("translate") || isWord("scale") || isWord("rotate")) {
+                out = transform(std::move(out));
+                continue;
+            }
+            if (isWord("transform")) {
+                for (const PovMove& m : readTransformBlock()) {
+                    out = applyMove(std::move(out), m.kind, m.v);
+                }
+                continue;
+            }
+            if (isWord("texture") || isWord("pigment") || isWord("finish")) {
+                // A texture per component blends textures across the surface, and this model
+                // holds one material per blob. Named, so the file's look is reported as lost.
+                note("blob component texture");
+                take();
+                skipBlock();
+                continue;
+            }
+            if (peek().kind == PovTokenKind::Word) {
+                refuse("'" + peek().text + "' on a blob component is not something this reader "
+                       "knows");
+            }
+            skipValue();
+        }
+        take();
+        return out;
+    }
+
+    /// One recognised object-modifier at the cursor: appearance folds into `appearance`, a
+    /// transform wraps `node`. False when the token is not a modifier this reader knows -- the
+    /// caller decides whether that is noted or refused. The split exists for readBlob(): a blob
+    /// must refuse an unknown word, or a mistyped component would be skipped and the solid would
+    /// quietly lose a lump.
+    bool modifierStep(PovNode& node, Material& appearance, bool& dressed) {
+        if (isWord("texture")) {
+            // A whole texture replaces whatever came before it. The index of refraction does
+            // not: POV hangs that on the object and the texture on the surface, so a file may
+            // write either first and the second must not undo the first.
+            const float ior = appearance.ior;
+            appearance = readAppearance();
+            appearance.ior = ior;
+            dressed = true;
+            return true;
+        }
+        if (isWord("pigment") || isWord("finish") || isWord("normal")) {
+            // Bare, these are items of one implicit texture and each says only its own part,
+            // so they accumulate. Starting a fresh material per block was the bug that made
+            // every exported scene come back white: the exporter writes `pigment` and then
+            // `finish`, and the finish was overwriting the color that had just been read.
+            readAppearanceInto(appearance);
+            dressed = true;
+            return true;
+        }
+        if (isWord("interior")) {
+            appearance.ior = readInterior();
+            dressed = true;
+            return true;
+        }
+        if (isWord("translate") || isWord("scale") || isWord("rotate")) {
+            node = transform(std::move(node));
+            return true;
+        }
+        if (isWord("transform")) {
+            for (const PovMove& m : readTransformBlock()) {
+                node = applyMove(std::move(node), m.kind, m.v);
+            }
+            return true;
+        }
+        if (peek().kind == PovTokenKind::Word && m_textures.count(peek().text) > 0) {
+            const float ior = appearance.ior;
+            appearance = m_textures[take().text];
+            appearance.ior = ior;
+            dressed = true;
+            return true;
+        }
+        return false;
+    }
+
     /// The modifiers after a shape's own arguments, up to the closing brace.
     ///
     /// Appearance is gathered and interned once, at the end. POV lets a texture and an interior sit
@@ -1406,46 +1569,7 @@ private:
             if (peek().kind == PovTokenKind::End) {
                 refuse("an object block was not closed");
             }
-
-            if (isWord("texture")) {
-                // A whole texture replaces whatever came before it. The index of refraction does
-                // not: POV hangs that on the object and the texture on the surface, so a file may
-                // write either first and the second must not undo the first.
-                const float ior = appearance.ior;
-                appearance = readAppearance();
-                appearance.ior = ior;
-                dressed = true;
-                continue;
-            }
-            if (isWord("pigment") || isWord("finish") || isWord("normal")) {
-                // Bare, these are items of one implicit texture and each says only its own part,
-                // so they accumulate. Starting a fresh material per block was the bug that made
-                // every exported scene come back white: the exporter writes `pigment` and then
-                // `finish`, and the finish was overwriting the color that had just been read.
-                readAppearanceInto(appearance);
-                dressed = true;
-                continue;
-            }
-            if (isWord("interior")) {
-                appearance.ior = readInterior();
-                dressed = true;
-                continue;
-            }
-            if (isWord("translate") || isWord("scale") || isWord("rotate")) {
-                node = transform(std::move(node));
-                continue;
-            }
-            if (isWord("transform")) {
-                for (const PovMove& m : readTransformBlock()) {
-                    node = applyMove(std::move(node), m.kind, m.v);
-                }
-                continue;
-            }
-            if (peek().kind == PovTokenKind::Word && m_textures.count(peek().text) > 0) {
-                const float ior = appearance.ior;
-                appearance = m_textures[take().text];
-                appearance.ior = ior;
-                dressed = true;
+            if (modifierStep(node, appearance, dressed)) {
                 continue;
             }
             if (peek().kind == PovTokenKind::Word) {
