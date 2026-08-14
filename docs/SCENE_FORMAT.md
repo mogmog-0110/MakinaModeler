@@ -133,7 +133,19 @@ Grasp3D の `.gsf` へ書き戻す経路は**作らない**。
 
 成分は変換ノードの下に置ける（成分ごとの `scale` は POV がそう書くため）。
 `Blob` の外に置かれた成分は評価に寄与しない（Eval.hpp が空を返す）。
-Grasp3D には存在しない語彙で、`.gsf` からは決して生成されない。POV インポートと手書きだけが作る。
+
+### 3.3c 回転体と掃引（POV の sor / sphere_sweep 由来）
+
+| `op` | パラメータ | 意味 |
+|---|---|---|
+| `Sor` | — | `children` は `SorPoint` をファイル順に。h に対する r² の 3 次（各区間は囲む 4 点を通る、実測で確定）を局所 Y 軸まわりに回転。両端の点は端の傾きだけを決め、表面上にない |
+| `SorPoint` | `radius`, `height` | 制御点 1 つ |
+| `SphereSweep` | `spline`（`"linear"`\|`"bspline"`、flags 経由） | `children` は `SweepPoint` をファイル順に。スプラインに沿って動く球の包絡。半径も中心と同じスプラインで補間 |
+| `SweepPoint` | `x`,`y`,`z`,`radius` | 制御点 1 つ |
+
+3.3b と同じく、`.gsf` からは決して生成されない語彙。制御点を外に置いても寄与しない。
+定義の単一の出どころは `SorProfile.hpp` / `SweepProfile.hpp` で、
+評価（Eval）・境界（Bounds）・GPU 焼き込み（Flatten / codegen）が同じ折れ線を読む。
 
 ### 3.4 綴りの訂正
 
