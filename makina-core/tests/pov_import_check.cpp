@@ -24,6 +24,7 @@
 #include <makina/Flatten.hpp>
 #include <makina/Pov.hpp>
 #include <makina/PovImport.hpp>
+#include <makina/PovSurvey.hpp>
 #include <makina/RenderMaterial.hpp>
 #include <makina/SceneJson.hpp>
 
@@ -256,6 +257,30 @@ void compareAppearance(const makina::Scene& before, const makina::Scene& after) 
                 static_cast<double>(worst));
 }
 
+/// The survey's promise, held against the reader's behaviour.
+///
+/// povSurvey() is a table and tables drift: a shape the importer learns stays "unsupported" in
+/// the survey, or the survey blesses a word the importer still refuses. Either way the report
+/// card lies to whoever is deciding if an internet file is usable. So on every exported fixture
+/// -- which the importer reads whole by construction -- the survey must come back clean, and on
+/// a probe that names an unsupported shape it must not.
+void surveyAgreesWithReader(const std::string& pov) {
+    const makina::PovSurveyResult clean = makina::povSurvey(pov);
+    if (!clean.clean) {
+        for (const makina::PovSurveyItem& item : clean.items) {
+            if (item.status != makina::PovStatus::Supported &&
+                item.status != makina::PovStatus::Ignored) {
+                throw std::runtime_error("the survey flags '" + item.name +
+                                         "' in a file the importer reads whole");
+            }
+        }
+    }
+    const makina::PovSurveyResult dirty = makina::povSurvey(pov + "\nsor { 2, <0,0>, <1,1> }");
+    if (dirty.clean) {
+        throw std::runtime_error("the survey missed a 'sor' appended to the file");
+    }
+}
+
 void roundTrip(const std::string& path) {
     std::printf("%s\n", path.c_str());
     // The solid, not the tree that was authored. A .pov has no way to say "this node is muted",
@@ -270,6 +295,7 @@ void roundTrip(const std::string& path) {
     // comparison would agree about nothing.
     opt.preamble = makina::detail::povLights(original);
     const std::string pov = makina::writePov(original, opt);
+    surveyAgreesWithReader(pov);
 
     makina::PovImportResult back;
     try {
@@ -483,6 +509,40 @@ void boundaries() {
     }
 }
 
+/// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
+///
+/// The two spellings reach the material through different code paths (a flat pigment reads its
+/// own vector; lights and pattern colors go through readMapColor), so each path is checked with
+/// the same 0.5, whose linear value 0.2140 is far enough from 0.5 that a missing decode cannot
+/// hide in tolerance.
+void srgbDecode() {
+    std::printf("srgb is display, rgb is linear\n");
+    const float kLinearHalf = 0.214041144f;
+
+    const makina::PovImportResult flat = makina::importPov(
+        "sphere{<0,0,0>,1 pigment{color srgb <0.5,0.5,0.5>}}\n"
+        "sphere{<3,0,0>,1 pigment{color rgb <0.5,0.5,0.5>}}");
+    check(flat.scene.materials.count == 2, "two materials expected");
+    check(std::fabs(flat.scene.materials[0].diffuse[0] - kLinearHalf) < 1e-5f,
+          "a flat srgb pigment was read as linear");
+    check(std::fabs(flat.scene.materials[1].diffuse[0] - 0.5f) < 1e-6f,
+          "a flat rgb pigment was changed");
+
+    const makina::PovImportResult pattern = makina::importPov(
+        "sphere{<0,0,0>,1 pigment{checker color srgb <0.5,0.5,0.5> color rgb <0.5,0.5,0.5>}}");
+    check(pattern.scene.pigments.count == 1, "one pigment expected");
+    check(std::fabs(pattern.scene.pigments[0].a[0] - kLinearHalf) < 1e-5f,
+          "a checker srgb color was read as linear");
+    check(std::fabs(pattern.scene.pigments[0].b[0] - 0.5f) < 1e-6f,
+          "a checker rgb color was changed");
+
+    const makina::PovImportResult light = makina::importPov(
+        "light_source{<0,5,0> color srgb <0.5,0.5,0.5>} sphere{<0,0,0>,1}");
+    check(light.scene.lights.count == 1, "one light expected");
+    check(std::fabs(light.scene.lights[0].color[0] - kLinearHalf) < 1e-5f,
+          "a light's srgb color was read as linear");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -490,6 +550,7 @@ int main(int argc, char** argv) {
 
     try {
         boundaries();
+        srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());
         ++failures;

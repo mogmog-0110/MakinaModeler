@@ -602,20 +602,34 @@ private:
         m_lights.push_back(l);
     }
 
+    /// The published sRGB transfer function, display value to linear.
+    ///
+    /// `srgb` numbers are display values and everything downstream of the reader is linear --
+    /// the shading, the export, the comparison against POV's own render. Reading them as linear
+    /// (which this did for a while) brightens every color and nothing complains, because the
+    /// scene still loads and still renders. The decode is the standard's, not anything of POV's.
+    static double srgbToLinear(double v) {
+        return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
+    }
+
     /// One `color` entry of a pigment or a color_map, as three floats in 0..1.
     ///
     /// POV allows the keyword pair `color rgb <...>`, so the leading words are eaten until the
     /// vector is reached. The filter that may follow is not read here: a color_map entry that was
     /// half transparent is not a thing this model's two-stop pigment can hold.
     void readMapColor(float out[3]) {
+        bool srgb = false;
         while (isWord("color") || isWord("rgb") || isWord("srgb") || isWord("rgbf") ||
                isWord("rgbt") || isWord("rgbft")) {
+            if (peek().text == "srgb") {
+                srgb = true;
+            }
             take();
         }
         double c[3];
         vector3(c);
         for (int i = 0; i < 3; ++i) {
-            out[i] = static_cast<float>(c[i]);
+            out[i] = static_cast<float>(srgb ? srgbToLinear(c[i]) : c[i]);
         }
     }
 
@@ -804,8 +818,10 @@ private:
                 double c[3];
                 m_tail.clear();
                 vector3(c);
+                // On the lap that reads the vector, w is the last keyword of the pair -- which
+                // is `srgb` exactly when the numbers are display values needing the decode.
                 for (int i = 0; i < 3; ++i) {
-                    m.diffuse[i] = static_cast<float>(c[i]);
+                    m.diffuse[i] = static_cast<float>(w == "srgb" ? srgbToLinear(c[i]) : c[i]);
                 }
                 // POV's fourth component is a filter after `rgbf` and a transmit after `rgbt`,
                 // and `rgbft` carries both. This model holds one opacity, so filter is what it
