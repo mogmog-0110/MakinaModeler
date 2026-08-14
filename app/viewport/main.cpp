@@ -467,13 +467,32 @@ int main(int argc, char** argv) {
         D3D12_GPU_VIRTUAL_ADDRESS        lightAddress = 0;
         std::uint32_t                    lightCount = 0;
 
+        // Isolate: show only the selected subtrees. Latched at toggle time rather than
+        // following the live selection, because the point of isolating is to keep looking at
+        // the same thing while clicking around inside it -- a filter that chased every pick
+        // would collapse to whatever was clicked last.
+        bool              isolating = false;
+        makina::Selection isolated;
+
         // The tree that gets drawn. Edit.hpp honours the mute flag in exactly one place, and
-        // this is where that place is called: everything downstream sees an ordinary scene.
-        const auto visible = [](const makina::Scene& s) {
-            return makina::hasMuted(s) ? makina::withoutMuted(s) : s;
+        // this is where that place is called; isolate stacks on top the same way. Everything
+        // downstream sees an ordinary scene -- the program, the bounds, the picking, the state
+        // the shell shows all come through here, so none of them can disagree about what is
+        // visible.
+        const auto visible = [&isolating, &isolated](const makina::Scene& s) {
+            const makina::Scene base = makina::hasMuted(s) ? makina::withoutMuted(s) : s;
+            return isolating ? makina::onlySelected(base, isolated) : base;
         };
 
         auto rebuild = [&]() {
+            // Drained before anything below is touched, not just before the pipeline swap.
+            // The material / pigment / light rings are destroyed and recreated a few lines
+            // down, and the frame in flight is still reading them: a shader fed a freed
+            // upload heap marches on garbage distances, the loop stops terminating, and the
+            // device comes back DEVICE_HUNG. Isolate hit this on every toggle-off; ordinary
+            // edits had been surviving on whatever the freed pages happened to contain.
+            dev.waitForGpu();
+
             prog = makina::flatten(visible(history.current()));
             bounds = makina::worldBounds(visible(history.current()));
 
@@ -542,9 +561,6 @@ int main(int argc, char** argv) {
             const std::vector<char> vs = readBinary(vsPath);
             const std::vector<char> ps = readBinary(psPath);
 
-            // The pipeline and the buffer about to be replaced may still be referenced by a frame
-            // in flight. Releasing those is a device removal, not an error message.
-            dev.waitForGpu();
             pso = createPipeline(dev.device(), rootSig.Get(), vs, ps);
 
             const std::size_t bytes = prog.nodes.size() * sizeof(makina::EvalNode);
@@ -1274,6 +1290,21 @@ int main(int argc, char** argv) {
                     // perspective, so switching projection is part of being there rather
                     // than a way out of it.
                     camera = makina::setOrthographic(camera, !camera.orthographic);
+                } else if (action == "view.isolate") {
+                    if (isolating) {
+                        isolating = false;
+                        std::printf("isolate off\n");
+                        rebuild();
+                    } else if (!selection.empty()) {
+                        isolated = selection;
+                        isolating = true;
+                        std::printf("isolating %zu node(s)\n", isolated.size());
+                        rebuild();
+                    } else {
+                        // Refused rather than isolating nothing: a world with everything
+                        // filtered out has no visible thing to click to get back.
+                        std::printf("nothing selected to isolate\n");
+                    }
                 } else if (action == "view.genuine") {
                     if (onAxis) {
                         camera = genuine;

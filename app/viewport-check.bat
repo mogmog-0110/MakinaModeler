@@ -229,6 +229,18 @@ echo    toolbar
     >"%OUT%\added.log" 2>&1
 call :present added 88 "the toolbar has to be able to add a shape"
 
+REM Isolate: only the selected subtree in the picture, and a way back.
+REM
+REM Three shots with the same selection. The base and the isolated one must differ (otherwise
+REM the toggle filtered nothing), and toggling twice must land back on the base exactly --
+REM isolate is a view, not an edit, so coming back must not have moved anything.
+echo    isolate
+call :isoshot isoBase ""
+call :isoshot isoOn   "view.isolate"
+call :isoshot isoBack "view.isolate view.isolate"
+call :diffPic isoBase isoOn "isolating has to change the picture"
+call :samePic isoBase isoBack "toggling isolate twice has to land back on the same picture"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -306,6 +318,16 @@ if not exist "%OUT%\state.json" (
 findstr /R /C:"%~1" "%OUT%\state.json" >nul 2>&1
 if errorlevel 1 (
     echo       FAILED: %~2
+    set FAILED=1
+)
+exit /b 0
+
+REM Like :actshot, but with node 13 selected -- isolate refuses an empty selection.
+:isoshot
+"%EXE%" "%SCENE%" --no-shell --select "13" --actions "%~2" --frames 40 ^
+    --screenshot "%OUT%\%~1.ppm" >"%OUT%\%~1.log" 2>&1
+if errorlevel 1 (
+    echo       FAILED: the run did not finish - see %OUT%\%~1.log
     set FAILED=1
 )
 exit /b 0

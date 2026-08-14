@@ -87,6 +87,9 @@ inline const std::vector<std::string>& knownActions() {
         // for it would be inventing one neither Maya nor Blender users have -- keymap_audit
         // takes the shell as a third source for exactly this case.
         "view.genuine",
+        // Blender's local view. Maya's isolate-select is a panel toggle with no default
+        // key, so only the Blender preset binds it -- same reasoning as view.genuine.
+        "view.isolate",
         "select.pick",     "select.add",       "select.descend",  "select.clear",
         "select.box",
         "edit.move",       "edit.rotate",      "edit.scale",
@@ -367,6 +370,7 @@ inline const char* blenderKeymapJson() {
     { "action": "select.clear",   "key": "A", "modifiers": ["alt"] },
 
     { "action": "view.fitSelected", "key": "NUMPADPERIOD" },
+    { "action": "view.isolate", "key": "NUMPADSLASH" },
     { "action": "view.fitAll",      "key": "HOME" },
     { "action": "view.front",  "key": "NUMPAD1" },
     { "action": "view.back",   "key": "NUMPAD1", "modifiers": ["ctrl"] },

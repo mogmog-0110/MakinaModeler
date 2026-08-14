@@ -86,6 +86,78 @@ using Selection = std::vector<std::uint32_t>;
     return false;
 }
 
+namespace detail {
+
+/// Marks `index` and everything under it. Children are contiguous (Flatten.hpp keeps them so),
+/// which is what makes this a loop over a range rather than a pointer chase.
+inline void markSubtree(const Scene& s, std::uint16_t index, bool* keep) {
+    keep[index] = true;
+    const std::uint16_t first = s.nodes[index].firstChild;
+    const std::uint16_t count = s.nodes[index].childCount;
+    for (std::uint16_t i = 0; i < count; ++i) {
+        markSubtree(s, static_cast<std::uint16_t>(first + i), keep);
+    }
+}
+
+}  // namespace detail
+
+/// The tree with only the selected subtrees left in it -- isolate, in modeller terms.
+///
+/// What stays is each selected subtree **and the chain of ancestors above it**. The ancestors are
+/// not decoration: a Translate three levels up is part of where the selected solid sits, and
+/// dropping it would isolate the shape into the wrong place. Siblings of that chain go.
+///
+/// A view-time filter like withoutMuted, not an edit: ids are untouched, nothing is committed,
+/// and the authored tree is what every edit still addresses. That is also why a selection that
+/// has vanished from the tree (deleted while isolated) returns the scene unfiltered -- an
+/// isolate showing nothing would leave no visible thing to click to get back out.
+[[nodiscard]] inline Scene onlySelected(const Scene& s, const Selection& selection) {
+    if (selection.empty()) {
+        return s;
+    }
+    Scene out = s;
+    // One removal per pass, same discipline as withoutMuted: each removal renumbers the array,
+    // so the keep set is recomputed from the tree as it now stands.
+    for (std::size_t guard = 0; guard < Scene::kMaxNodes; ++guard) {
+        bool keep[Scene::kMaxNodes] = {};
+        bool any = false;
+        for (const std::uint32_t id : selection) {
+            const std::uint16_t index = indexOfId(out, id);
+            if (index == kNoChild) {
+                continue;
+            }
+            any = true;
+            detail::markSubtree(out, index, keep);
+            for (std::uint16_t p = out.nodes[index].parent; p != kNoParent;
+                 p = out.nodes[p].parent) {
+                keep[p] = true;
+            }
+        }
+        if (!any) {
+            return s;
+        }
+        // The outermost node that has to go: not kept, under a kept parent. Removing it takes
+        // its whole subtree along, which is why one find per pass is enough to converge.
+        std::uint16_t found = kNoChild;
+        for (std::uint32_t i = 1; i < out.nodes.count && found == kNoChild; ++i) {
+            if (!keep[i] && keep[out.nodes[i].parent]) {
+                found = static_cast<std::uint16_t>(i);
+            }
+        }
+        if (found == kNoChild) {
+            break;
+        }
+        detail::RebuildPlan plan;
+        plan.skip = found;
+        const EditResult r = detail::rebuild(out, plan);
+        if (!r.ok) {
+            return s;
+        }
+        out = r.scene;
+    }
+    return out;
+}
+
 /// The selected nodes an edit should act on: those no other selected node contains.
 ///
 /// Ids that are no longer in the tree are dropped too. A selection outlives an undo, and asking to

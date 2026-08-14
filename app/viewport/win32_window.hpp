@@ -272,6 +272,7 @@ private:
             case VK_NUMPAD8: return "NUMPAD8";
             case VK_NUMPAD9: return "NUMPAD9";
             case VK_DECIMAL: return "NUMPADPERIOD";
+            case VK_DIVIDE:  return "NUMPADSLASH";
             case VK_HOME:    return "HOME";
             case VK_DELETE:  return "DELETE";
             case VK_ESCAPE:  return "ESCAPE";

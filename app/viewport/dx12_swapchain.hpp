@@ -174,7 +174,15 @@ public:
 
         ID3D12CommandList* lists[] = {m_list.Get()};
         m_queue->ExecuteCommandLists(1, lists);
-        check(m_swap->Present(vsync ? 1 : 0, 0), "Present");
+        const HRESULT presented = m_swap->Present(vsync ? 1 : 0, 0);
+        if (FAILED(presented) && m_device) {
+            // The Present HRESULT says the device died; the removal reason says why. Without
+            // this, a shader that hangs the GPU and a buffer freed under a frame in flight
+            // produce the same one-line error and get debugged as the same bug.
+            std::fprintf(stderr, "device removed reason: 0x%08lX\n",
+                         static_cast<unsigned long>(m_device->GetDeviceRemovedReason()));
+        }
+        check(presented, "Present");
 
         m_fenceValues[m_frame] = ++m_fenceValue;
         check(m_queue->Signal(m_fence.Get(), m_fenceValue), "Signal");
