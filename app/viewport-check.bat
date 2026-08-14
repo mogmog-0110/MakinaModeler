@@ -216,6 +216,19 @@ echo    field
 call :diffAs typed untyped "a number typed into the panel has to reach the tree"
 call :present typed 11 "setting a parameter must not remove the node"
 
+REM The shapes on the toolbar.
+REM
+REM Fourteen of Grasp3D's bar are these -- eight primitives, three booleans, three transforms --
+REM and every one of them was drawn, labelled and dead. The keymap has no `add.` actions, so
+REM shell_audit had nothing to compare them against and nothing had registered a handler.
+REM
+REM (42,15) is the box. The new node takes the next id, and this scene ends at 87, so 88 is the
+REM one the click made.
+echo    toolbar
+"%EXE%" "%SCENE%" --frames 200 --click "42,15" --save "%OUT%\added.json" ^
+    >"%OUT%\added.log" 2>&1
+call :present added 88 "the toolbar has to be able to add a shape"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say

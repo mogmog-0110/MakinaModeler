@@ -630,6 +630,18 @@ int main(int argc, char** argv) {
                     for (int k = 0; k < 12 && table[i].keys[k] != nullptr; ++k) {
                         shell.accept(std::string("input:") + table[i].keys[k]);
                     }
+                    // And `add.<op>` for the toolbar. Grasp3D's bar is mostly these -- eight
+                    // primitives, three booleans, three transforms -- and every one of them was
+                    // drawn, labelled and dead: the keymap has no `add.` actions, so nothing had
+                    // ever registered a handler for them.
+                    //
+                    // The names come from the same table as the buttons' icons, so a button
+                    // cannot name a shape the core does not build.
+                    std::string lower = table[i].name;
+                    for (char& c : lower) {
+                        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    }
+                    shell.accept("add." + lower);
                 }
             }
         }
@@ -730,6 +742,49 @@ int main(int argc, char** argv) {
                             handled = true;
                         }
                     }
+                    // A shape from the toolbar. Added under the last node picked when that
+                    // node can hold children, and under the root otherwise -- putting a sphere
+                    // inside a sphere is not a tree Grasp3D can express, and refusing the click
+                    // would make the button feel broken rather than opinionated.
+                    if (!handled && pendingAction.rfind("add.", 0) == 0) {
+                        const std::string want = pendingAction.substr(4);
+                        int opCount = 0;
+                        const makina::OpEntry* table = makina::opTable(opCount);
+                        const char* opName = nullptr;
+                        for (int i = 0; i < opCount && opName == nullptr; ++i) {
+                            std::string lower = table[i].name;
+                            for (char& c : lower) {
+                                c = static_cast<char>(std::tolower(
+                                    static_cast<unsigned char>(c)));
+                            }
+                            if (lower == want) {
+                                opName = table[i].name;
+                            }
+                        }
+                        if (opName != nullptr) {
+                            std::uint32_t parent = 0;
+                            if (!selection.empty()) {
+                                const std::uint16_t index =
+                                    makina::indexOfId(history.current(), selection.back());
+                                if (index != makina::kNoChild &&
+                                    !makina::isPrimitive(static_cast<makina::Op>(
+                                        history.current().nodes[index].op))) {
+                                    parent = selection.back();
+                                }
+                            }
+                            const makina::CommandResult r = makina::runCommand(
+                                history, nlohmann::json{{"op", "add"},
+                                                        {"parent", parent},
+                                                        {"node", {{"op", opName}}}});
+                            std::printf("%s\n", r.message.c_str());
+                            if (r.ok) {
+                                selection = makina::selectOnly(r.newId);
+                                rebuild();
+                            }
+                            handled = true;
+                        }
+                    }
+
                     // A number typed into the property panel. Straight through the command
                     // layer, so the field and a script take the same road into the tree and
                     // land in the history as one entry each.

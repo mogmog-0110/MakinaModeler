@@ -161,7 +161,13 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         const std::string name = cmd["node"].value("name", cmd.value("name", std::string()));
         const std::uint16_t at =
             static_cast<std::uint16_t>(cmd.value("at", int(0xFFFF)));
-        const EditResult e = addChild(s, cmd.value("parent", 0u), node, name, at);
+        // No parent named means the root. Ids start at 1, so the old default of 0 was not a
+        // node anyone could have -- `{"op":"add","node":{...}}` could only ever answer
+        // "no node with id 0", which reads as a bug in the caller rather than in the default.
+        const std::uint32_t parentId =
+            cmd.value("parent", 0u) != 0u ? cmd.value("parent", 0u)
+                                          : (s.nodes.count > 0 ? s.nodes[0].id : 0u);
+        const EditResult e = addChild(s, parentId, node, name, at);
         if (!e.ok) {
             r.message = e.why;
             return r;
