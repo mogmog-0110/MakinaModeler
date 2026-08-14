@@ -192,7 +192,15 @@ void boundsAndStrays() {
 /// the two are different conservative bounds on the same surface, not the same number.
 void flattenAgreesWithEval() {
     std::printf("the program draws the tree's blob\n");
-    const std::string scenes[3] = {
+    const std::string sorBody =
+        "{\"id\":2,\"op\":\"Sor\",\"name\":\"Sor\",\"children\":["
+        "{\"id\":3,\"op\":\"SorPoint\",\"name\":\"P\",\"radius\":0.14,\"height\":-0.12},"
+        "{\"id\":4,\"op\":\"SorPoint\",\"name\":\"P\",\"radius\":0.03,\"height\":0.02},"
+        "{\"id\":5,\"op\":\"SorPoint\",\"name\":\"P\",\"radius\":0.34,\"height\":0.14},"
+        "{\"id\":6,\"op\":\"SorPoint\",\"name\":\"P\",\"radius\":0.508,\"height\":0.42},"
+        "{\"id\":7,\"op\":\"SorPoint\",\"name\":\"P\",\"radius\":0.472,\"height\":0.84},"
+        "{\"id\":8,\"op\":\"SorPoint\",\"name\":\"P\",\"radius\":0.14,\"height\":1.64}]}";
+    const std::string scenes[4] = {
         blob(blobSphere(3, 0.2, -0.1, 0.3, 1, 1) + "," + blobSphere(4, -0.6, 0.2, 0, 0.8, 0.7),
              0.5625),
         blob("{\"id\":3,\"op\":\"Scale\",\"name\":\"S\",\"x\":2,\"y\":1,\"z\":1,\"children\":[" +
@@ -201,6 +209,7 @@ void flattenAgreesWithEval() {
         blob("{\"id\":3,\"op\":\"BlobCylinder\",\"name\":\"C\",\"x1\":-0.7,\"y1\":-0.4,\"z1\":0,"
              "\"x2\":0.7,\"y2\":0.6,\"z2\":0.2,\"radius\":0.9,\"strength\":1}",
              0.5625),
+        sorBody,
     };
     for (const std::string& body : scenes) {
         const makina::Scene s = scene(

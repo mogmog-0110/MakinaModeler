@@ -45,6 +45,9 @@ enum class EvalOp : std::uint32_t {
     // BlobSum/BlobFinish chain may consume them -- the flattener is what guarantees that.
     BlobSphere       = 6,
     BlobCylinder     = 7,
+    /// A revolved profile. params[0] is the offset of its polyline in EvalProgram::sorProfiles
+    /// (in floats), params[1] the vertex count of the right side; the mirror is implicit.
+    Sor              = 8,
 
     Union        = 16,
     Difference   = 17,
@@ -110,6 +113,10 @@ struct EvalProgram {
     std::vector<EvalNode> nodes;   ///< RPN order
     /// One entry per (pattern, object space) pair the scene actually uses.
     std::vector<GpuPigment> pigments;
+    /// Sor polylines, flat (radius, height) pairs; an EvalOp::Sor node points into this. A side
+    /// table because a profile does not fit an 80-byte node, and the generated shader inlines it
+    /// as constants so the GPU never reads it as a buffer.
+    std::vector<float> sorProfiles;
     int maxStackDepth = 0;
     FlattenReport report;
 };
@@ -199,6 +206,7 @@ struct FlattenContext {
     const Scene*  scene;
     FlattenReport report;
     std::vector<GpuPigment> pigments;
+    std::vector<float> sorProfiles;
 };
 
 /// Interns one (pattern, object space) pair, so two solids wearing the same texture in the same
@@ -599,10 +607,40 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
     }
 
     if (op == Op::Sor) {
-        // No GPU form yet: the profile does not fit an 80-byte node. Counted, so the report says
-        // the picture is missing a solid instead of the solid quietly not being there.
-        ++ctx.report.skippedUnsupported;
-        return Fragment{};
+        // The polyline goes to the side table; the node keeps only where and how much. Material
+        // and pattern ride the one node the way they do on a primitive.
+        double side[kMaxSorSide][2];
+        const int num = sorPolyline(*ctx.scene, index, side);
+        if (num == 0) {
+            return Fragment{};   // too few points: no geometry, same as Eval.hpp's kEmpty
+        }
+        EvalNode e{};
+        e.op = static_cast<std::uint32_t>(EvalOp::Sor);
+        e.params[0] = static_cast<float>(ctx.sorProfiles.size());
+        e.params[1] = static_cast<float>(num);
+        e.params[3] = static_cast<float>(scaleCorrection);
+        e.materialId = resolveMaterial(*ctx.scene, n);
+        e.pigmentId = kNoPigment;
+        if (e.materialId < ctx.scene->materials.count) {
+            const std::int32_t t = ctx.scene->materials[e.materialId].textureId;
+            if (t >= 0 && static_cast<std::uint32_t>(t) < ctx.scene->pigments.count) {
+                e.pigmentId = internPigment(ctx, ctx.scene->pigments[t],
+                                            carriesTexture ? world : textureWorld);
+            }
+        }
+        Mat4 inv{};
+        if (!invertAffine(world, inv)) {
+            ++ctx.report.skippedUnsupported;
+            return Fragment{};
+        }
+        for (int r = 0; r < 12; ++r) {
+            e.inv[r] = static_cast<float>(inv.m[r]);
+        }
+        for (int i = 0; i < num; ++i) {
+            ctx.sorProfiles.push_back(static_cast<float>(side[i][0]));
+            ctx.sorProfiles.push_back(static_cast<float>(side[i][1]));
+        }
+        return Fragment{e};
     }
     if (op == Op::SorPoint) {
         return Fragment{};
@@ -647,13 +685,20 @@ constexpr int kMaxEvalStack = 32;
 /// Lifted out so the distance walk and the surface walk below cannot drift: two copies of a
 /// primitive table is exactly the kind of difference that shows up as one shape being subtly the
 /// wrong size in one of the two answers, with nothing to point at.
-inline double evalLeaf(const EvalNode& n, const double wp[3]) {
+inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double wp[3]) {
     const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];
     const double y = n.inv[4] * wp[0] + n.inv[5] * wp[1] + n.inv[6] * wp[2] + n.inv[7];
     const double z = n.inv[8] * wp[0] + n.inv[9] * wp[1] + n.inv[10] * wp[2] + n.inv[11];
 
     double d;
     switch (static_cast<EvalOp>(n.op)) {
+        case EvalOp::Sor: {
+            const int offset = static_cast<int>(n.params[0]);
+            const int num = static_cast<int>(n.params[1]);
+            d = detail::sorSideDistance(prog.sorProfiles.data() + offset, num,
+                                        std::sqrt(x * x + z * z), y);
+            break;
+        }
         case EvalOp::Sphere:
             d = mkSdSphere(x, y, z, n.params[0]);
             break;
@@ -730,7 +775,7 @@ inline double evalProgram(const EvalProgram& prog, const double wp[3]) {
             return kEmpty;
         }
 
-        stack[sp++] = evalLeaf(n, wp);
+        stack[sp++] = evalLeaf(prog, n, wp);
     }
 
     return sp > 0 ? stack[0] : kEmpty;
@@ -800,7 +845,7 @@ inline ProgramSurface evalProgramSurface(const EvalProgram& prog, const double w
             return ProgramSurface{};
         }
         ProgramSurface leaf;
-        leaf.distance = evalLeaf(n, wp);
+        leaf.distance = evalLeaf(prog, n, wp);
         leaf.materialId = n.materialId;
         leaf.pigmentId = n.pigmentId;
         stack[sp++] = leaf;
@@ -815,11 +860,12 @@ inline EvalProgram flatten(const Scene& s) {
         return out;
     }
 
-    detail::FlattenContext ctx{&s, {}, {}};
+    detail::FlattenContext ctx{&s, {}, {}, {}};
     out.nodes = detail::flattenNode(ctx, 0, detail::identityMat(), detail::identityMat(), 1.0,
                                     detail::kTopLevel);
     out.report = ctx.report;
     out.pigments = std::move(ctx.pigments);
+    out.sorProfiles = std::move(ctx.sorProfiles);
 
     // Stack depth of the emitted sequence, which is what sizes the shader's array.
     int depth = 0;

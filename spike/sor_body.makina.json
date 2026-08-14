@@ -1,0 +1,113 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "nextId": 13,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "children": [
+      {
+        "id": 2,
+        "op": "Rotate",
+        "name": "Rotate",
+        "axis": "Z",
+        "degree": 15.0,
+        "children": [
+          {
+            "id": 3,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "X",
+            "degree": 35.0,
+            "children": [
+              {
+                "id": 4,
+                "op": "Sor",
+                "name": "Sor",
+                "material": 0,
+                "children": [
+                  {
+                    "id": 5,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.14000000059604645,
+                    "height": -0.11999999731779099
+                  },
+                  {
+                    "id": 6,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.029999999329447746,
+                    "height": 0.019999999552965164
+                  },
+                  {
+                    "id": 7,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.3400000035762787,
+                    "height": 0.14000000059604645
+                  },
+                  {
+                    "id": 8,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.5080000162124634,
+                    "height": 0.41999998688697815
+                  },
+                  {
+                    "id": 9,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.47200000286102295,
+                    "height": 0.8399999737739563
+                  },
+                  {
+                    "id": 10,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.38499999046325684,
+                    "height": 1.2400000095367432
+                  },
+                  {
+                    "id": 11,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.029999999329447746,
+                    "height": 1.5
+                  },
+                  {
+                    "id": 12,
+                    "op": "SorPoint",
+                    "name": "SorPoint",
+                    "radius": 0.14000000059604645,
+                    "height": 1.6399999856948853
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    {
+      "id": 0,
+      "diffuse": [
+        51,
+        102,
+        204
+      ],
+      "alpha": 1.0,
+      "ambient": 0.10000000149011612,
+      "specular": 0.0,
+      "shininess": 0.0,
+      "emission": 0.0,
+      "texture": null
+    }
+  ]
+}

@@ -302,86 +302,22 @@ inline double evalBlob(const Scene& s, std::uint16_t index, const double p[3], d
 
 // -------------------------------------------------------------- revolved profile
 
-/// Signed distance to a closed polygon, negative inside. Even-odd crossings decide the sign, so
-/// the winding direction does not matter.
-inline double sdPolygon(const double (*v)[2], int num, double px, double py) {
-    double d = 1e60;
-    double sgn = 1.0;
-    for (int i = 0, j = num - 1; i < num; j = i++) {
-        const double ex = v[j][0] - v[i][0], ey = v[j][1] - v[i][1];
-        const double wx = px - v[i][0], wy = py - v[i][1];
-        const double ee = ex * ex + ey * ey;
-        const double t = ee > 0.0 ? mkClamp((wx * ex + wy * ey) / ee, 0.0, 1.0) : 0.0;
-        const double bx = wx - ex * t, by = wy - ey * t;
-        const double q = bx * bx + by * by;
-        if (q < d) {
-            d = q;
-        }
-        const bool c1 = py >= v[i][1];
-        const bool c2 = py < v[j][1];
-        const bool c3 = ex * wy > ey * wx;
-        if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) {
-            sgn = -sgn;
-        }
-    }
-    return sgn * std::sqrt(d);
-}
-
 /// The revolved solid's distance: exact in the meridian plane, so the 3D answer is the 2D
-/// distance from (rho, y) to the full cross-section polygon -- both profile sides, so the axis
-/// is interior and never mistaken for surface.
+/// distance from (rho, y) to the full cross-section -- both profile sides, so the axis is
+/// interior and never mistaken for surface.
 ///
 /// The profile is POV's: a cubic in r-squared over h through the interior points, the first and
-/// last points steering the end slopes (public reference). Each segment is a Hermite with the
-/// neighbours' secant slope, walked into a polyline; the sor-silhouette comparison against POV
-/// is the measurement that this is the curve POV traces.
+/// last points steering the end slopes (public reference). SorProfile.hpp walks it into a
+/// polyline and holds the distance; the sor-silhouette comparison against POV is the
+/// measurement that this is the curve POV traces.
 inline double evalSor(const Scene& s, std::uint16_t index, const double p[3], double scale) {
-    double r2[kMaxSorPoints];
-    double h[kMaxSorPoints];
-    const int n = sorControls(s, index, r2, h);
-    if (n < 4) {
+    double side[kMaxSorSide][2];
+    const int num = sorPolyline(s, index, side);
+    if (num == 0) {
         return kEmpty;
     }
-    // The surface spans the interior points, whose heights must climb; the importer refuses
-    // files that do not, so a fold here is a hand-built scene and stays empty rather than
-    // turning the cross-section polygon inside out.
-    for (int i = 1; i + 2 < n; ++i) {
-        if (h[i + 1] <= h[i]) {
-            return kEmpty;
-        }
-    }
-
-    // Right profile, bottom to top.
-    constexpr int kMaxSide = (kMaxSorPoints - 3) * kSorSamplesPerSegment + 1;
-    double side[kMaxSide][2];
-    int num = 0;
-    for (int seg = 1; seg + 2 < n; ++seg) {
-        double dh, m0, m1;
-        sorSegment(r2, h, seg, dh, m0, m1);
-        const int first = seg == 1 ? 0 : 1;
-        for (int k = first; k <= kSorSamplesPerSegment; ++k) {
-            const double t = static_cast<double>(k) / kSorSamplesPerSegment;
-            const double t2 = t * t, t3 = t2 * t;
-            const double v = (2 * t3 - 3 * t2 + 1) * r2[seg] + (t3 - 2 * t2 + t) * dh * m0 +
-                             (-2 * t3 + 3 * t2) * r2[seg + 1] + (t3 - t2) * dh * m1;
-            side[num][0] = std::sqrt(v > 0.0 ? v : 0.0);
-            side[num][1] = h[seg] + t * dh;
-            ++num;
-        }
-    }
-
-    // The full cross-section: the right side up, then its mirror down. The caps close
-    // themselves as the edges between the two top and the two bottom vertices.
-    double poly[2 * kMaxSide][2];
-    for (int i = 0; i < num; ++i) {
-        poly[i][0] = side[i][0];
-        poly[i][1] = side[i][1];
-        poly[num + i][0] = -side[num - 1 - i][0];
-        poly[num + i][1] = side[num - 1 - i][1];
-    }
-
     const double rho = std::sqrt(p[0] * p[0] + p[2] * p[2]);
-    return sdPolygon(poly, 2 * num, rho, p[1]) * scale;
+    return sorSideDistance(&side[0][0], num, rho, p[1]) * scale;
 }
 
 inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], double scale,

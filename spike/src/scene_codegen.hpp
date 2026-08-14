@@ -64,6 +64,11 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n,
             o << "mkSdTorus(" << p << ".x, " << p << ".y, " << p << ".z, " << flt(n.params[0])
               << ", " << flt(n.params[1]) << ")";
             break;
+        case makina::EvalOp::Sor:
+            // The helper carries this node's inlined polyline; the correction multiply below
+            // applies like any primitive's.
+            o << "sorDist" << i << "(length(" << p << ".xz), " << p << ".y)";
+            break;
         // Densities, not distances; their params[3] is 1, so the correction multiply below is
         // the identity and the shared tail stays shared.
         case makina::EvalOp::BlobSphere:
@@ -88,6 +93,57 @@ inline std::string blobFinishExpr(const makina::EvalNode& n, const std::string& 
 }
 
 }  // namespace detail
+
+/// One helper per Sor node: its polyline as inlined constants and the cross-section distance,
+/// the same walk SorProfile.hpp does on the CPU. The mirror side is taken by index so only the
+/// right side is stored. Shared by both generated functions through the node index in the name.
+inline std::string generateSorHelpers(const makina::EvalProgram& prog) {
+    std::ostringstream o;
+    for (std::size_t i = 0; i < prog.nodes.size(); ++i) {
+        const makina::EvalNode& n = prog.nodes[i];
+        if (static_cast<makina::EvalOp>(n.op) != makina::EvalOp::Sor) {
+            continue;
+        }
+        const int offset = static_cast<int>(n.params[0]);
+        const int num = static_cast<int>(n.params[1]);
+        const int last = 2 * num - 1;
+
+        o << "static const float2 kSorSide" << i << "[" << num << "] = {\n";
+        for (int k = 0; k < num; ++k) {
+            o << "    float2(" << detail::flt(prog.sorProfiles[offset + 2 * k]) << ", "
+              << detail::flt(prog.sorProfiles[offset + 2 * k + 1]) << ")"
+              << (k + 1 < num ? ",\n" : "\n");
+        }
+        o << "};\n";
+        o << "float2 sorVert" << i << "(int j) {\n"
+          << "    return j < " << num << " ? kSorSide" << i << "[j]\n"
+          << "        : float2(-kSorSide" << i << "[" << last << " - j].x, kSorSide" << i << "["
+          << last << " - j].y);\n}\n";
+        o << "float sorDist" << i << "(float px, float py) {\n"
+          << "    float d = 1.0e30;\n"
+          << "    float sgn = 1.0;\n"
+          << "    int j = " << last << ";\n"
+          << "    [loop] for (int k = 0; k <= " << last << "; ++k) {\n"
+          << "        float2 vi = sorVert" << i << "(k);\n"
+          << "        float2 vj = sorVert" << i << "(j);\n"
+          << "        float2 e = vj - vi;\n"
+          << "        float2 w = float2(px, py) - vi;\n"
+          << "        float ee = dot(e, e);\n"
+             // A zero-length edge appears when the profile ends at radius zero and meets its
+             // mirror; skipping the projection rather than dividing keeps the distance finite.
+          << "        float t = ee > 0.0 ? saturate(dot(w, e) / ee) : 0.0;\n"
+          << "        float2 b = w - e * t;\n"
+          << "        d = min(d, dot(b, b));\n"
+          << "        bool c1 = py >= vi.y;\n"
+          << "        bool c2 = py < vj.y;\n"
+          << "        bool c3 = e.x * w.y > e.y * w.x;\n"
+          << "        if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) { sgn = -sgn; }\n"
+          << "        j = k;\n"
+          << "    }\n"
+          << "    return sgn * sqrt(d);\n}\n\n";
+    }
+    return o.str();
+}
 
 inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
     std::ostringstream o;
@@ -260,7 +316,8 @@ inline std::string generateShader(const makina::EvalProgram& prog,
         // every scene and nothing needs compiling when the model changes.
         o << "#include \"scene_interpret.hlsl\"\n\n";
     } else {
-        o << generateEvalCsg(prog) << "\n" << generateEvalCsgMaterial(prog) << "\n";
+        o << generateSorHelpers(prog) << generateEvalCsg(prog) << "\n"
+          << generateEvalCsgMaterial(prog) << "\n";
     }
     o << "#include \"" << shadingInclude << "\"\n";
     return o.str();
