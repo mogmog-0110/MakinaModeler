@@ -140,6 +140,36 @@ MK_FN MK_FLOAT mkSdTorus(MK_FLOAT x, MK_FLOAT y, MK_FLOAT z, MK_FLOAT major, MK_
     return MK_SQRT(qx * qx + y * y) - minor;
 }
 
+// ---------------------------------------------------------------- blob densities
+//
+// Not distances: a blob component contributes a density, and the surface is where the summed
+// field crosses the blob's threshold (Eval.hpp evalBlob, EvalOp::BlobFinish). The falloff is
+// POV's, from the public reference; the renders are compared against POV to keep it so.
+
+/// strength * (1 - (r/R)^2)^2 inside the support, exactly 0 at and beyond R.
+MK_FN MK_FLOAT mkBlobFalloff(MK_FLOAT r2, MK_FLOAT radius, MK_FLOAT strength) {
+    MK_FLOAT R2 = radius * radius;
+    if (R2 <= 0.0 || r2 >= R2) {
+        return 0.0;
+    }
+    MK_FLOAT u = 1.0 - r2 / R2;
+    return strength * u * u;
+}
+
+/// Canonical sphere component: centered on the origin.
+MK_FN MK_FLOAT mkBlobSphereDensity(MK_FLOAT x, MK_FLOAT y, MK_FLOAT z, MK_FLOAT radius,
+                                   MK_FLOAT strength) {
+    return mkBlobFalloff(x * x + y * y + z * z, radius, strength);
+}
+
+/// Canonical cylinder component: the segment runs -halfLen..halfLen on Y, so the support is a
+/// capsule and the density falls off with the distance to the segment.
+MK_FN MK_FLOAT mkBlobCylinderDensity(MK_FLOAT x, MK_FLOAT y, MK_FLOAT z, MK_FLOAT radius,
+                                     MK_FLOAT halfLen, MK_FLOAT strength) {
+    MK_FLOAT dy = MK_MAX(MK_ABS(y) - halfLen, 0.0);
+    return mkBlobFalloff(x * x + z * z + dy * dy, radius, strength);
+}
+
 /// Ring on the XZ plane at y=0. No thickness, so no interior and never negative.
 MK_FN MK_FLOAT mkSdDisc(MK_FLOAT x, MK_FLOAT y, MK_FLOAT z, MK_FLOAT r, MK_FLOAT hole) {
     MK_FLOAT rho = MK_SQRT(x * x + z * z);

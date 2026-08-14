@@ -211,17 +211,6 @@ struct BlobTerms {
     double support = kEmpty; ///< distance to the nearest component support, never negative
 };
 
-/// POV's component density: strength * (1 - (r/R)^2)^2 inside the support, 0 at and beyond R.
-/// The falloff is from the public reference; the renders are compared against POV to keep it so.
-inline double blobDensity(double r2, double radius, double strength) {
-    const double R2 = radius * radius;
-    if (R2 <= 0.0 || r2 >= R2) {
-        return 0.0;
-    }
-    const double u = 1.0 - r2 / R2;
-    return strength * u * u;
-}
-
 /// Largest |d density / d r| of one component: 8*sqrt(3)/9 * |strength| / R, at r = R/sqrt(3).
 inline double blobLipschitz(double radius, double strength) {
     return radius <= 0.0 ? 0.0 : 1.5396007178390020 * std::fabs(strength) / radius;
@@ -271,7 +260,7 @@ inline void accumBlob(const Scene& s, std::uint16_t index, const double p[3], do
             radius = q[6];
             strength = q[7];
         }
-        t.field += blobDensity(r2, radius, strength);
+        t.field += mkBlobFalloff(r2, radius, strength);
         t.lipschitz += blobLipschitz(radius, strength) / nz(minScale);
         const double sup = (std::sqrt(r2) - radius) * minScale;
         const double clamped = sup > 0.0 ? sup : 0.0;

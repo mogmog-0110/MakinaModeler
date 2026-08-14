@@ -64,11 +64,27 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n,
             o << "mkSdTorus(" << p << ".x, " << p << ".y, " << p << ".z, " << flt(n.params[0])
               << ", " << flt(n.params[1]) << ")";
             break;
+        // Densities, not distances; their params[3] is 1, so the correction multiply below is
+        // the identity and the shared tail stays shared.
+        case makina::EvalOp::BlobSphere:
+            o << "mkBlobSphereDensity(" << p << ".x, " << p << ".y, " << p << ".z, "
+              << flt(n.params[0]) << ", " << flt(n.params[1]) << ")";
+            break;
+        case makina::EvalOp::BlobCylinder:
+            o << "mkBlobCylinderDensity(" << p << ".x, " << p << ".y, " << p << ".z, "
+              << flt(n.params[0]) << ", " << flt(n.params[1]) << ", " << flt(n.params[2]) << ")";
+            break;
         default:
             o << "mkSdPlane(" << p << ".y, 0.0)";
             break;
     }
     o << ") * " << flt(n.params[3]) << ";\n";
+}
+
+/// BlobFinish's expression over an already-generated field value: the one unary op.
+inline std::string blobFinishExpr(const makina::EvalNode& n, const std::string& field) {
+    return "(" + flt(n.params[0]) + " - " + field + ") / " + flt(n.params[1]) + " * " +
+           flt(n.params[3]);
 }
 
 }  // namespace detail
@@ -92,6 +108,16 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
         const makina::EvalNode& n = prog.nodes[i];
         const std::string var = "t" + std::to_string(i);
 
+        if (n.op == static_cast<std::uint32_t>(makina::EvalOp::BlobFinish)) {
+            if (stack.empty()) {
+                throw std::runtime_error("evaluation program is malformed: a blob finish has no "
+                                         "field to close");
+            }
+            const std::string field = stack.back();  stack.pop_back();
+            o << "    float " << var << " = " << detail::blobFinishExpr(n, field) << ";\n";
+            stack.push_back(var);
+            continue;
+        }
         if (n.op >= static_cast<std::uint32_t>(makina::EvalOp::Union)) {
             if (stack.size() < 2) {
                 throw std::runtime_error("evaluation program is malformed: a boolean has fewer "
@@ -104,6 +130,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
             switch (static_cast<makina::EvalOp>(n.op)) {
                 case makina::EvalOp::Union:      o << "min(" << a << ", " << b << ");\n"; break;
                 case makina::EvalOp::Difference: o << "max(" << a << ", -" << b << ");\n"; break;
+                case makina::EvalOp::BlobSum:    o << a << " + " << b << ";\n"; break;
                 default:                         o << "max(" << a << ", " << b << ");\n"; break;
             }
             stack.push_back(var);
@@ -155,6 +182,23 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
         const makina::EvalNode& n = prog.nodes[i];
         const std::string var = "m" + std::to_string(i);
 
+        if (n.op == static_cast<std::uint32_t>(makina::EvalOp::BlobFinish)) {
+            if (stack.empty()) {
+                throw std::runtime_error("evaluation program is malformed: a blob finish has no "
+                                         "field to close");
+            }
+            const std::string field = stack.back();  stack.pop_back();
+            // The finish node is the blob's one surface, so it carries the material; the
+            // density leaves below it never win a comparison.
+            o << "    float3 " << var << " = float3("
+              << detail::blobFinishExpr(n, field + ".x") << ", "
+              << detail::flt(static_cast<float>(n.materialId)) << ", "
+              << detail::flt(n.pigmentId == makina::kNoPigment
+                                 ? -1.0f
+                                 : static_cast<float>(n.pigmentId)) << ");\n";
+            stack.push_back(var);
+            continue;
+        }
         if (n.op >= static_cast<std::uint32_t>(makina::EvalOp::Union)) {
             if (stack.size() < 2) {
                 throw std::runtime_error("evaluation program is malformed: a boolean has fewer "
@@ -170,6 +214,9 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
                     break;
                 case makina::EvalOp::Difference:
                     o << "float3(max(" << a << ".x, -" << b << ".x), " << a << ".yz);\n";
+                    break;
+                case makina::EvalOp::BlobSum:
+                    o << "float3(" << a << ".x + " << b << ".x, " << a << ".yz);\n";
                     break;
                 default:
                     o << a << ".x > " << b << ".x ? " << a << " : " << b << ";\n";

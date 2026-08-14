@@ -11,6 +11,7 @@
 
 #include <makina/Bounds.hpp>
 #include <makina/Eval.hpp>
+#include <makina/Flatten.hpp>
 #include <makina/SceneJson.hpp>
 
 #include <cmath>
@@ -184,6 +185,62 @@ void boundsAndStrays() {
           "a component with no blob above it should evaluate to empty");
 }
 
+/// The flattened program must draw the same blob the tree evaluates.
+///
+/// Signs must agree everywhere; magnitudes only where the field is live, because the program
+/// deliberately drops the distance-to-support sharpening the tree has -- outside every support
+/// the two are different conservative bounds on the same surface, not the same number.
+void flattenAgreesWithEval() {
+    std::printf("the program draws the tree's blob\n");
+    const std::string scenes[3] = {
+        blob(blobSphere(3, 0.2, -0.1, 0.3, 1, 1) + "," + blobSphere(4, -0.6, 0.2, 0, 0.8, 0.7),
+             0.5625),
+        blob("{\"id\":3,\"op\":\"Scale\",\"name\":\"S\",\"x\":2,\"y\":1,\"z\":1,\"children\":[" +
+                 blobSphere(4, 0, 0, 0, 1, 1) + "]}",
+             0.5625),
+        blob("{\"id\":3,\"op\":\"BlobCylinder\",\"name\":\"C\",\"x1\":-0.7,\"y1\":-0.4,\"z1\":0,"
+             "\"x2\":0.7,\"y2\":0.6,\"z2\":0.2,\"radius\":0.9,\"strength\":1}",
+             0.5625),
+    };
+    for (const std::string& body : scenes) {
+        const makina::Scene s = scene(
+            "{\"id\":9,\"op\":\"Translate\",\"name\":\"T\",\"x\":0.5,\"y\":0,\"z\":0,"
+            "\"children\":[" + body + "]}");
+        const makina::EvalProgram prog = makina::flatten(s);
+        check(prog.report.skippedUnsupported == 0, "the flatten should take the whole blob");
+
+        int disagree = 0;
+        double worstLive = 0.0;
+        for (double x = -2.0; x <= 2.6; x += 0.35) {
+            for (double y = -2.0; y <= 2.0; y += 0.35) {
+                for (double z = -2.0; z <= 2.0; z += 0.35) {
+                    const double p[3] = {x, y, z};
+                    const double a = makina::eval(s, p);
+                    const double b = makina::evalProgram(prog, p);
+                    if ((a < 0.0) != (b < 0.0)) {
+                        ++disagree;
+                    }
+                    // Inside the support union the two share the (threshold-field)/L formula
+                    // and may differ only by float32 storage of the baked transforms. 0.1 stays
+                    // below threshold/L for every scene here, so a value under it can only come
+                    // from inside -- outside, both bounds sit at threshold/L or above.
+                    if (a < 0.1) {
+                        const double d = std::fabs(a - b);
+                        if (d > worstLive) {
+                            worstLive = d;
+                        }
+                    }
+                }
+            }
+        }
+        check(disagree == 0,
+              std::to_string(disagree) + " grid point(s) are inside one evaluator and outside "
+                                         "the other");
+        check(worstLive < 1e-4,
+              "near the field the two evaluators differ by " + std::to_string(worstLive));
+    }
+}
+
 /// The scene format holds a blob byte for byte, same property roundtrip proves for the rest.
 void jsonRoundTrip() {
     std::printf("the format holds a blob\n");
@@ -209,6 +266,7 @@ int main() {
         cylinderComponent();
         scaledComponent();
         boundsAndStrays();
+        flattenAgreesWithEval();
         jsonRoundTrip();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

@@ -1,0 +1,101 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "nextId": 9,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "children": [
+      {
+        "id": 2,
+        "op": "Rotate",
+        "name": "Rotate",
+        "axis": "Y",
+        "degree": 40.0,
+        "children": [
+          {
+            "id": 3,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "X",
+            "degree": 25.0,
+            "children": [
+              {
+                "id": 4,
+                "op": "Blob",
+                "name": "Blob",
+                "material": 0,
+                "threshold": 0.550000011920929,
+                "children": [
+                  {
+                    "id": 5,
+                    "op": "Scale",
+                    "name": "Scale",
+                    "x": 1.0,
+                    "y": 0.5199999809265137,
+                    "z": 0.5199999809265137,
+                    "children": [
+                      {
+                        "id": 6,
+                        "op": "BlobSphere",
+                        "name": "BlobSphere",
+                        "x": 0.0,
+                        "y": 0.25999999046325684,
+                        "z": 0.0,
+                        "radius": 1.0,
+                        "strength": 1.0
+                      }
+                    ]
+                  },
+                  {
+                    "id": 7,
+                    "op": "Scale",
+                    "name": "Scale",
+                    "x": 1.0,
+                    "y": 0.4000000059604645,
+                    "z": 0.5199999809265137,
+                    "children": [
+                      {
+                        "id": 8,
+                        "op": "BlobCylinder",
+                        "name": "BlobCylinder",
+                        "x1": 0.0,
+                        "y1": -0.11999999731779099,
+                        "z1": 0.0,
+                        "x2": 0.0,
+                        "y2": 0.05999999865889549,
+                        "z2": 0.0,
+                        "radius": 0.9200000166893005,
+                        "strength": 0.8999999761581421
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    {
+      "id": 0,
+      "diffuse": [
+        230,
+        89,
+        26
+      ],
+      "alpha": 1.0,
+      "ambient": 0.10000000149011612,
+      "specular": 0.0,
+      "shininess": 0.0,
+      "emission": 0.0,
+      "texture": null
+    }
+  ]
+}

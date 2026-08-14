@@ -41,10 +41,19 @@ enum class EvalOp : std::uint32_t {
     ConeCentered     = 3,
     Torus            = 4,
     Plane            = 5,
+    // Density leaves, not distances: each pushes its component's density at the point. Only a
+    // BlobSum/BlobFinish chain may consume them -- the flattener is what guarantees that.
+    BlobSphere       = 6,
+    BlobCylinder     = 7,
 
     Union        = 16,
     Difference   = 17,
     Intersection = 18,
+    /// Binary like the booleans: pops two densities, pushes their sum.
+    BlobSum      = 19,
+    /// The one unary op: pops the summed field, pushes (threshold - field) / L * correction.
+    /// Every walker dispatches on it before the "op >= Union means binary" test.
+    BlobFinish   = 20,
 };
 
 /// 80 bytes, 16-byte aligned throughout so it maps onto an HLSL StructuredBuffer unchanged.
@@ -340,6 +349,158 @@ inline bool emitPrimitive(FlattenContext& ctx, const CsgNode& n, const Mat4& wor
     return true;
 }
 
+/// One blob component as a density leaf, plus its share of the Lipschitz bound.
+///
+/// `corr` is the running distance correction at this node and `blobCorr` the one at the Blob
+/// itself, so corr/blobCorr is the smallest axis factor of the transforms between the two --
+/// the same quantity Eval.hpp's field walk tracks as minScale. The leaf's own params[3] stays 1:
+/// a density is a scalar composed with the inverse transform and needs no distance correction.
+inline void collectBlobLeaves(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
+                              double corr, double blobCorr, Fragment& leaves, double& lipschitz) {
+    const CsgNode& n = ctx.scene->nodes[index];
+    const Op op = static_cast<Op>(n.op);
+
+    if (isTransform(op)) {
+        const Mat4 child = mulMat(world, matrixOf(n));
+        const double c = corr * scaleFactorOf(n);
+        for (std::uint16_t i = 0; i < n.childCount; ++i) {
+            collectBlobLeaves(ctx, static_cast<std::uint16_t>(n.firstChild + i), child, c,
+                              blobCorr, leaves, lipschitz);
+        }
+        return;
+    }
+
+    if (isBlobComponent(op)) {
+        EvalNode e{};
+        e.materialId = kNoMaterial;
+        e.pigmentId = kNoPigment;
+        e.params[3] = 1.0f;
+        const float* q = n.params;
+
+        Mat4 full = world;
+        double radius;
+        double strength;
+        if (static_cast<Op>(n.op) == Op::BlobSphere) {
+            e.op = static_cast<std::uint32_t>(EvalOp::BlobSphere);
+            radius = q[3];
+            strength = q[4];
+            e.params[0] = q[3];
+            e.params[1] = q[4];
+            const Mat4 toCenter{{1, 0, 0, q[0], 0, 1, 0, q[1], 0, 0, 1, q[2], 0, 0, 0, 1}};
+            full = mulMat(world, toCenter);
+        } else {
+            radius = q[6];
+            strength = q[7];
+            const double ux = static_cast<double>(q[3]) - q[0];
+            const double uy = static_cast<double>(q[4]) - q[1];
+            const double uz = static_cast<double>(q[5]) - q[2];
+            const double len = std::sqrt(ux * ux + uy * uy + uz * uz);
+            const double mx = (static_cast<double>(q[0]) + q[3]) * 0.5;
+            const double my = (static_cast<double>(q[1]) + q[4]) * 0.5;
+            const double mz = (static_cast<double>(q[2]) + q[5]) * 0.5;
+            if (len < 1e-12) {
+                // Both end points coincide: the capsule is a sphere, and emitting it as one
+                // avoids a rotation towards a direction that does not exist.
+                e.op = static_cast<std::uint32_t>(EvalOp::BlobSphere);
+                e.params[0] = q[6];
+                e.params[1] = q[7];
+                const Mat4 toMid{{1, 0, 0, mx, 0, 1, 0, my, 0, 0, 1, mz, 0, 0, 0, 1}};
+                full = mulMat(world, toMid);
+            } else {
+                e.op = static_cast<std::uint32_t>(EvalOp::BlobCylinder);
+                e.params[0] = q[6];
+                e.params[1] = static_cast<float>(len * 0.5);
+                e.params[2] = q[7];
+                // A frame whose local Y is the segment's direction. Any perpendicular pair
+                // serves for X and Z: the density is radially symmetric about the axis.
+                const double ax = ux / len, ay = uy / len, az = uz / len;
+                const double hx = std::fabs(ay) < 0.9 ? 0.0 : 1.0;
+                const double hy = std::fabs(ay) < 0.9 ? 1.0 : 0.0;
+                double vx = hy * az - 0.0 * ay, vy = 0.0 * ax - hx * az,
+                       vz = hx * ay - hy * ax;
+                const double vl = std::sqrt(vx * vx + vy * vy + vz * vz);
+                vx /= vl; vy /= vl; vz /= vl;
+                const double wx = ay * vz - az * vy;
+                const double wy = az * vx - ax * vz;
+                const double wz = ax * vy - ay * vx;
+                const Mat4 place{{vx, ax, wx, mx,
+                                  vy, ay, wy, my,
+                                  vz, az, wz, mz,
+                                  0, 0, 0, 1}};
+                full = mulMat(world, place);
+            }
+        }
+
+        Mat4 inv{};
+        if (!invertAffine(full, inv)) {
+            ++ctx.report.skippedUnsupported;
+            return;
+        }
+        for (int r = 0; r < 12; ++r) {
+            e.inv[r] = static_cast<float>(inv.m[r]);
+        }
+        lipschitz += blobLipschitz(radius, strength) / nz(corr / blobCorr);
+        leaves.push_back(e);
+        return;
+    }
+
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        collectBlobLeaves(ctx, static_cast<std::uint16_t>(n.firstChild + i), world, corr,
+                          blobCorr, leaves, lipschitz);
+    }
+}
+
+/// One Blob as a program fragment: density leaves folded left with BlobSum -- a running sum
+/// keeps the stack two deep, so balancing would buy nothing -- then one BlobFinish carrying
+/// the threshold, the Lipschitz bound, and the blob's own distance correction.
+///
+/// The program's blob differs from Eval.hpp's in one measured way: it has no
+/// distance-to-support sharpening, so far from the blob it steps by threshold/L instead of by
+/// the true clearance. Same sign everywhere, both conservative; the march is slower, not wrong.
+inline Fragment emitBlob(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
+                         const Mat4& textureWorld, double scaleCorrection) {
+    const CsgNode& n = ctx.scene->nodes[index];
+    Fragment leaves;
+    double lipschitz = 0.0;
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        collectBlobLeaves(ctx, static_cast<std::uint16_t>(n.firstChild + i), world,
+                          scaleCorrection, scaleCorrection, leaves, lipschitz);
+    }
+    if (leaves.empty() || lipschitz <= 0.0) {
+        // No components is no geometry, same as Eval.hpp's kEmpty.
+        return Fragment{};
+    }
+
+    Fragment out;
+    for (std::size_t i = 0; i < leaves.size(); ++i) {
+        out.push_back(leaves[i]);
+        if (i > 0) {
+            EvalNode s{};
+            s.op = static_cast<std::uint32_t>(EvalOp::BlobSum);
+            s.params[3] = 1.0f;
+            s.materialId = kNoMaterial;
+            s.pigmentId = kNoPigment;
+            out.push_back(s);
+        }
+    }
+
+    EvalNode f{};
+    f.op = static_cast<std::uint32_t>(EvalOp::BlobFinish);
+    f.params[0] = n.params[0];
+    f.params[1] = static_cast<float>(lipschitz);
+    f.params[3] = static_cast<float>(scaleCorrection);
+    f.materialId = resolveMaterial(*ctx.scene, n);
+    f.pigmentId = kNoPigment;
+    if (f.materialId < ctx.scene->materials.count) {
+        const std::int32_t t = ctx.scene->materials[f.materialId].textureId;
+        if (t >= 0 && static_cast<std::uint32_t>(t) < ctx.scene->pigments.count) {
+            f.pigmentId = internPigment(ctx, ctx.scene->pigments[t], textureWorld);
+        }
+    }
+    out.push_back(f);
+    return out;
+}
+
 Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
                      const Mat4& textureWorld, double scaleCorrection, bool underBoolean);
 
@@ -426,6 +587,17 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
                                scaleCorrection, EvalOp::Intersection, kUnderBoolean);
     }
 
+    if (op == Op::Blob) {
+        // Like a primitive, a blob's pattern is nailed to its own space and moves with it.
+        return emitBlob(ctx, index, world, carriesTexture ? world : textureWorld,
+                        scaleCorrection);
+    }
+    if (isBlobComponent(op)) {
+        // Outside a Blob a component has no field to join; Eval.hpp returns kEmpty for the same
+        // reason.
+        return Fragment{};
+    }
+
     // Merge, SceneRoot, Unsupported, and every primitive. A primitive with children contributes
     // both its own surface and theirs, which is what the reference evaluator does.
     std::vector<Fragment> parts;
@@ -489,12 +661,23 @@ inline double evalLeaf(const EvalNode& n, const double wp[3]) {
         case EvalOp::Torus:
             d = mkSdTorus(x, y, z, n.params[0], n.params[1]);
             break;
+        // Densities, not distances: no correction applies, so these return directly. The value
+        // is only meaningful to the BlobSum/BlobFinish chain the flattener emits after them.
+        case EvalOp::BlobSphere:
+            return mkBlobSphereDensity(x, y, z, n.params[0], n.params[1]);
+        case EvalOp::BlobCylinder:
+            return mkBlobCylinderDensity(x, y, z, n.params[0], n.params[1], n.params[2]);
         default:
             // Plane: the height was folded into the transform, so the half space is y <= 0.
             d = mkSdPlane(y, 0.0);
             break;
     }
     return d * n.params[3];
+}
+
+/// BlobFinish's arithmetic, shared by both walkers so the field/distance bridge cannot drift.
+inline double evalBlobFinish(const EvalNode& n, double field) {
+    return (static_cast<double>(n.params[0]) - field) / n.params[1] * n.params[3];
 }
 
 /// Walks the emitted program on the CPU, with exactly the semantics the shader implements.
@@ -511,6 +694,13 @@ inline double evalProgram(const EvalProgram& prog, const double wp[3]) {
     int sp = 0;
 
     for (const EvalNode& n : prog.nodes) {
+        if (n.op == static_cast<std::uint32_t>(EvalOp::BlobFinish)) {
+            if (sp < 1) {
+                return kEmpty;
+            }
+            stack[sp - 1] = evalBlobFinish(n, stack[sp - 1]);
+            continue;
+        }
         if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
             if (sp < 2) {
                 return kEmpty;   // malformed program; better empty than a silent wrong answer
@@ -520,6 +710,7 @@ inline double evalProgram(const EvalProgram& prog, const double wp[3]) {
             switch (static_cast<EvalOp>(n.op)) {
                 case EvalOp::Union:        stack[sp++] = a < b ? a : b; break;
                 case EvalOp::Difference:   stack[sp++] = a > -b ? a : -b; break;
+                case EvalOp::BlobSum:      stack[sp++] = a + b; break;
                 default:                   stack[sp++] = a > b ? a : b; break;
             }
             continue;
@@ -560,6 +751,19 @@ inline ProgramSurface evalProgramSurface(const EvalProgram& prog, const double w
     int sp = 0;
 
     for (const EvalNode& n : prog.nodes) {
+        if (n.op == static_cast<std::uint32_t>(EvalOp::BlobFinish)) {
+            if (sp < 1) {
+                return ProgramSurface{};
+            }
+            // The whole blob is one surface, and the finish node is what wears its material --
+            // the density leaves below it never surface on their own.
+            ProgramSurface r;
+            r.distance = evalBlobFinish(n, stack[sp - 1].distance);
+            r.materialId = n.materialId;
+            r.pigmentId = n.pigmentId;
+            stack[sp - 1] = r;
+            continue;
+        }
         if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
             if (sp < 2) {
                 return ProgramSurface{};
@@ -571,6 +775,10 @@ inline ProgramSurface evalProgramSurface(const EvalProgram& prog, const double w
             } else if (static_cast<EvalOp>(n.op) == EvalOp::Difference) {
                 ProgramSurface r = a;
                 r.distance = a.distance > -b.distance ? a.distance : -b.distance;
+                stack[sp++] = r;
+            } else if (static_cast<EvalOp>(n.op) == EvalOp::BlobSum) {
+                ProgramSurface r;
+                r.distance = a.distance + b.distance;
                 stack[sp++] = r;
             } else {
                 stack[sp++] = a.distance > b.distance ? a : b;
@@ -606,7 +814,9 @@ inline EvalProgram flatten(const Scene& s) {
     // Stack depth of the emitted sequence, which is what sizes the shader's array.
     int depth = 0;
     for (const EvalNode& n : out.nodes) {
-        if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
+        if (n.op == static_cast<std::uint32_t>(EvalOp::BlobFinish)) {
+            // Unary: pops one, pushes one.
+        } else if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
             --depth;
         } else {
             ++depth;
