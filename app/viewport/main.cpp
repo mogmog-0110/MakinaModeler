@@ -311,6 +311,9 @@ int main(int argc, char** argv) {
     int  clickX = -1;
     int  clickY = -1;
     std::string typeText;
+    // Which page to load. The shell by default; a probe when the question is about the
+    // bridge itself rather than about the modeller.
+    std::string page = "shell.html";
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keymap" && i + 1 < argc) {
@@ -367,6 +370,8 @@ int main(int argc, char** argv) {
             }
             clickX = std::atoi(xy.substr(0, comma).c_str());
             clickY = std::atoi(xy.substr(comma + 1).c_str());
+        } else if (a == "--page" && i + 1 < argc) {
+            page = argv[++i];
         } else if (a == "--text" && i + 1 < argc) {
             typeText = argv[++i];
         } else if (a == "--no-shell") {
@@ -608,7 +613,8 @@ int main(int argc, char** argv) {
                             std::lock_guard<std::mutex> lock(pendingMutex);
                             pendingAction = name;
                             pendingPayload = payload;
-                        });
+                        },
+                        page);
             for (const std::string& action : makina::knownActions()) {
                 shell.accept(action);
             }

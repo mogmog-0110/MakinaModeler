@@ -61,13 +61,14 @@ public:
     /// the same thing to the caller -- draw the scene, skip the panels -- so the difference is
     /// only in what gets printed.
     bool start(ID3D12Device* device, ID3D12CommandQueue* queue, const std::string& exeDir,
-               int width, int height, ShellAction onAction) {
+               int width, int height, ShellAction onAction,
+               const std::string& page = "shell.html") {
 #if defined(MITIRU_HAS_CEF)
         m_onAction = std::move(onAction);
         // app://, not file://. The engine's scheme handler serves <exe>/assets and the
         // bridge is wired for that origin; a file:// page renders and its cefQuery goes
         // nowhere, which looks exactly like a button that does nothing.
-        const std::string url = "app://ui/shell.html";
+        const std::string url = "app://ui/" + page;
         if (!m_ctx.initialize(device, queue, exeDir, exeDir + "/makina_cef.log", width, height,
                               url)) {
             std::fprintf(stderr, "warning: the shell did not start; drawing without it\n");

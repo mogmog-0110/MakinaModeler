@@ -203,6 +203,19 @@ echo    outliner
 call :inFile rowpick "id.:11,[^{]*selected.:true" "clicking a row has to select that node"
 call :inFile rowpick "id.:13,[^{]*selected.:false" "and has to let go of the one before it"
 
+REM A number typed into the property panel, all the way to the tree.
+REM
+REM The last of the three ways the page can reach C++ -- a button, a row, and a field -- and the
+REM only one that needs a keystroke. (1200,128) is the radius of node 11, read off the rendered
+REM panel rather than guessed, and the run without the typing is the thing it has to differ from.
+echo    field
+"%EXE%" "%SCENE%" --no-shell --select "11" --frames 150 --save "%OUT%\untyped.json" ^
+    >"%OUT%\untyped.log" 2>&1
+"%EXE%" "%SCENE%" --select "11" --frames 200 --click "1200,128" --text "3" ^
+    --save "%OUT%\typed.json" >"%OUT%\typed.log" 2>&1
+call :diffAs typed untyped "a number typed into the panel has to reach the tree"
+call :present typed 11 "setting a parameter must not remove the node"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say

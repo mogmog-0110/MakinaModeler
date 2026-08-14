@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>keyprobe</title>
+<!--
+  計測器であって、シェルではない。
+
+  シェルには JS を書かないという規則があるが、それは「状態を JS に持たせない」ための規則で
+  あって、観測を禁じるものではない。ここは C++ から送ったキーがページ側で何になっているかを
+  読むためだけの頁で、data-m-* も束縛器も使わない。
+
+  出力はコンソールへ。エンジンの OnConsoleMessage が stderr に流すので、ヘッドレスの実行
+  からでも読める。
+
+  使い方: makina_viewport ... --page keyprobe.html --click <欄の座標> --text "3"
+-->
+<style>
+  body { font: 14px/1.6 system-ui, sans-serif; background: #fff; margin: 12px; }
+  input { font: inherit; padding: 4px; width: 200px; }
+  input:focus { outline: 2px solid #2f6df0; }
+</style>
+</head>
+<body>
+<p>key probe</p>
+<input id="f" type="text" value="start">
+<script>
+  var f = document.getElementById('f');
+  // 4 つ全部を見る。keydown だけ来て input が来なければ「キーは届いたが文字にならない」、
+  // どれも来なければ「そもそも届いていない」で、原因の場所が変わる。
+  ['keydown', 'keypress', 'keyup', 'input'].forEach(function (name) {
+    f.addEventListener(name, function (e) {
+      console.log('PROBE ' + name +
+                  ' key=' + (e.key === undefined ? '-' : e.key) +
+                  ' code=' + (e.code === undefined ? '-' : e.code) +
+                  ' which=' + (e.which === undefined ? '-' : e.which) +
+                  ' value=' + f.value);
+    });
+  });
+  window.addEventListener('focus', function () { console.log('PROBE window focus'); });
+  f.addEventListener('focus', function () { console.log('PROBE field focus'); });
+  console.log('PROBE ready');
+</script>
+</body>
+</html>

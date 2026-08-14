@@ -541,6 +541,40 @@ Makina の `lookAlong()` は yaw と pitch を上書きするので、**軸方�
 実際には配布が古かっただけで、`select.pick` にも `data-m-arg` にも何の問題も無かった。
 切り分けは正しく、前提が腐っていた。**二分探索は、両側が同じ版でなければ嘘をつく。**
 
+## 直す前に、計測器を置いた
+
+プロパティ欄に打った数字が届かない件で、疑いは 2 つあった。エンジンの `MitiruCefInput` が
+`native_key_code` に生スキャンコードを入れていること（Windows の Chromium は lParam 形式を
+期待する）と、Enter に `KEYEVENT_CHAR` が送られていないこと。
+
+**どちらも直さなかった。** 代わりに `app/ui/keyprobe.html` を置いた -- 入力欄 1 つと、
+`keydown` / `keypress` / `keyup` / `input` を `console.log` するだけの頁である。コンソールは
+stderr に出るようにしてあるので、ヘッドレスの実行から読める。
+
+    PROBE field focus
+    PROBE keydown  key=3     code=Digit3 which=51 value=start
+    PROBE keypress key=3     code=Digit3 which=51 value=start
+    PROBE input                                    value=start3
+    PROBE keydown  key=Enter code=Enter which=13   value=start3
+
+**キーの経路は完全に無実だった。** 疑っていた 2 箇所を「直して」いたら、動くものを 2 つ
+壊したうえで、症状が消えたのを直った証拠と取り違えていた。
+
+同じ手順でシェル側を測ると `set` が出て、木が実際に変わった。この 2 つの run の差は
+ページだけである -- 計測器は原因を教えないが、**どこを見なくてよいかを教える**。
+
+## ページが C++ に届く道は 3 本あり、どれも他の検査では通らない
+
+| 道 | 何を押すか | 検査 |
+|---|---|---|
+| ボタン | ツールバーのミュート | `button` |
+| 行 | アウトライナのノード | `outliner` |
+| 欄 | プロパティの数値 + Enter | `field` |
+
+`--keys` はキーマップを通り、`--actions` はページを飛ばす。**3 本とも、専用の入口
+(`--click` / `--text`) を作らないと 1 度も踏まれない。** 対照はそれぞれ、ボタンの外を押す /
+行の外を押す / 数字でない文字を打つ で、3 つとも落ちることを確認済み。
+
 ## 反対向きにも測る
 
 **「2 つのレンダラが一致した」は「どちらも描いていない」でも成立する。**
