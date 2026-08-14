@@ -766,6 +766,56 @@ void sweepImport() {
     refuses("sphere_sweep { linear_spline 2, <0,0,0>, 0, <0,1,0>, 1 }", "positive radius");
 }
 
+/// finish{diffuse} folds into the material exactly: pigment * d/0.6, ambient * 0.6/d, so POV's
+/// pigment*(ambient + d*light) is unchanged term for term while the renderer keeps its baked
+/// 0.6. Order must not matter -- POV's slots have none -- and a declared texture must carry its
+/// diffuse to every object that wears it.
+void finishDiffuse() {
+    std::printf("finish diffuse folds into the material\n");
+    const char* const kBoth[2] = {
+        "sphere{<0,0,0>,1 pigment{color rgb <0.6,0.3,0.3>} finish{ambient 0.2 diffuse 0.9}}",
+        "sphere{<0,0,0>,1 texture{finish{ambient 0.2 diffuse 0.9} pigment{color rgb "
+        "<0.6,0.3,0.3>}}}"};
+    for (const char* src : kBoth) {
+        try {
+            const makina::PovImportResult r = makina::importPov(src);
+            check(r.unsupported.empty(), "the diffuse finish should read whole");
+            check(r.scene.materials.count == 1, "one material expected");
+            const makina::Material& m = r.scene.materials[0];
+            check(std::fabs(m.diffuse[0] - 0.9f) < 1e-6f && std::fabs(m.diffuse[1] - 0.45f) < 1e-6f,
+                  "the pigment should scale by d/0.6 whichever order the blocks come in");
+            check(std::fabs(m.ambient - 0.2f * 0.6f / 0.9f) < 1e-6f,
+                  "the ambient should scale by 0.6/d");
+        } catch (const makina::PovParseError& e) {
+            check(false, std::string("the diffuse finish was refused: ") + e.what());
+        }
+    }
+
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "#declare T = texture{pigment{color rgb <0.6,0.6,0.6>} finish{diffuse 0.3}}\n"
+            "sphere{<0,0,0>,1 texture{T}}");
+        check(std::fabs(r.scene.materials[0].diffuse[0] - 0.3f) < 1e-6f,
+              "a declared texture should carry its diffuse to the object wearing it");
+
+        makina::PovOptions opt;
+        const makina::PovImportResult back = makina::importPov(makina::writePov(r.scene, opt));
+        check(back.scene.materials.count == 1 &&
+                  std::fabs(back.scene.materials[0].diffuse[0] -
+                            r.scene.materials[0].diffuse[0]) < 1e-6f,
+              "the scaled material should survive the POV round trip unchanged");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the declared diffuse texture was refused: ") + e.what());
+    }
+
+    // The two cases the rescale cannot hold, named rather than silently wrong.
+    notes("sphere{<0,0,0>,1 pigment{checker color rgb <1,0,0> color rgb <0,1,0>} "
+          "finish{diffuse 0.9}}",
+          "finish diffuse with a pattern");
+    notes("sphere{<0,0,0>,1 pigment{color rgb <1,0,0>} finish{ambient 0.3 diffuse 0}}",
+          "finish diffuse 0");
+}
+
 /// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
 ///
 /// The two spellings reach the material through different code paths (a flat pigment reads its
@@ -811,6 +861,7 @@ int main(int argc, char** argv) {
         blobImport();
         sorImport();
         sweepImport();
+        finishDiffuse();
         srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

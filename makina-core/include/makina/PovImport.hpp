@@ -89,6 +89,20 @@ struct PovMacro {
     std::vector<PovToken>    body;
 };
 
+/// A material being read, plus the one finish term Material has no slot for.
+///
+/// POV shades pigment * (ambient + diffuse * light) with diffuse defaulting to 0.6, and
+/// RenderMaterial bakes that same 0.6. Another diffuse d is therefore held exactly by scaling:
+/// pigment * d/0.6 and ambient * 0.6/d leave every term of POV's sum unchanged, and the
+/// exporter writing no diffuse keyword closes the loop through POV's default. The factor rides
+/// here until the appearance is interned, because pigment and finish arrive in either order and
+/// the scale must apply once, after both.
+struct PovAppearance {
+    Material material{};
+    /// finish{diffuse}, or negative while the file has not named one.
+    double finishDiffuse = -1.0;
+};
+
 /// One parse in progress: the token stream, the symbol tables, and the tree being built.
 class PovReader {
 public:
@@ -696,10 +710,11 @@ private:
         return m;
     }
 
-    Material readAppearance() {
-        Material m = defaultAppearance();
-        readAppearanceInto(m);
-        return m;
+    PovAppearance readAppearance() {
+        PovAppearance a;
+        a.material = defaultAppearance();
+        readAppearanceInto(a);
+        return a;
     }
 
     /// `interior { ... }`, of which only the index of refraction is representable.
@@ -961,7 +976,8 @@ private:
         m.textureId = static_cast<std::int32_t>(m_pigments.size() - 1);
     }
 
-    void readAppearanceInto(Material& m) {
+    void readAppearanceInto(PovAppearance& a) {
+        Material& m = a.material;
         const std::string kind = take().text;   // texture | pigment | finish | normal
 
         if (kind == "normal") {
@@ -977,7 +993,7 @@ private:
         if (isPunct('{') && peek(1).kind == PovTokenKind::Word &&
             m_textures.count(peek(1).text) > 0 && isPunct('}', 2)) {
             take();
-            m = m_textures[take().text];
+            a = m_textures[take().text];
             take();
             return;
         }
@@ -988,7 +1004,7 @@ private:
                 refuse("a " + kind + " block was not closed");
             }
             if (isWord("texture") || isWord("pigment") || isWord("finish") || isWord("normal")) {
-                readAppearanceInto(m);
+                readAppearanceInto(a);
                 continue;
             }
             if (peek().kind != PovTokenKind::Word) {
@@ -1058,15 +1074,11 @@ private:
                 continue;
             }
             if (w == "diffuse") {
-                // Material has no diffuse coefficient; RenderMaterial supplies POV's default of
-                // 0.6. A file asking for another value is asking for a look this cannot hold.
-                if (std::fabs(number() - 0.6) > 1e-6) {
-                    note("finish diffuse");
-                }
+                a.finishDiffuse = number();
                 continue;
             }
             if (m_textures.count(w) > 0) {
-                m = m_textures[w];
+                a = m_textures[w];
                 continue;
             }
             note(kind + " " + w);
@@ -1424,7 +1436,8 @@ private:
         expectPunct('{');
         PovNode node = leaf(Op::Blob, "Blob");
         node.params[0] = 1.0f;   // POV's default threshold (public reference, 3.7)
-        Material appearance = defaultAppearance();
+        PovAppearance appearance;
+        appearance.material = defaultAppearance();
         bool dressed = false;
 
         while (!isPunct('}')) {
@@ -1636,14 +1649,14 @@ private:
     /// caller decides whether that is noted or refused. The split exists for readBlob(): a blob
     /// must refuse an unknown word, or a mistyped component would be skipped and the solid would
     /// quietly lose a lump.
-    bool modifierStep(PovNode& node, Material& appearance, bool& dressed) {
+    bool modifierStep(PovNode& node, PovAppearance& appearance, bool& dressed) {
         if (isWord("texture")) {
             // A whole texture replaces whatever came before it. The index of refraction does
             // not: POV hangs that on the object and the texture on the surface, so a file may
             // write either first and the second must not undo the first.
-            const float ior = appearance.ior;
+            const float ior = appearance.material.ior;
             appearance = readAppearance();
-            appearance.ior = ior;
+            appearance.material.ior = ior;
             dressed = true;
             return true;
         }
@@ -1657,7 +1670,7 @@ private:
             return true;
         }
         if (isWord("interior")) {
-            appearance.ior = readInterior();
+            appearance.material.ior = readInterior();
             dressed = true;
             return true;
         }
@@ -1672,9 +1685,9 @@ private:
             return true;
         }
         if (peek().kind == PovTokenKind::Word && m_textures.count(peek().text) > 0) {
-            const float ior = appearance.ior;
+            const float ior = appearance.material.ior;
             appearance = m_textures[take().text];
-            appearance.ior = ior;
+            appearance.material.ior = ior;
             dressed = true;
             return true;
         }
@@ -1687,7 +1700,8 @@ private:
     /// on the same object in either order, and interning after each one would leave the half-built
     /// material in the table for nothing to point at.
     PovNode modifiers(PovNode node) {
-        Material appearance = node.material >= 0
+        PovAppearance appearance;
+        appearance.material = node.material >= 0
                                   ? m_materials[static_cast<std::size_t>(node.material)]
                                   : defaultAppearance();
         bool dressed = false;
@@ -1815,6 +1829,33 @@ private:
         return applyMove(std::move(node), kind, v);
     }
 
+    /// Interns an appearance, applying the finish{diffuse} rescale exactly once.
+    int materialIndex(const PovAppearance& a) {
+        Material m = a.material;
+        if (a.finishDiffuse >= 0.0 && std::fabs(a.finishDiffuse - 0.6) > 1e-9) {
+            if (m.textureId >= 0) {
+                // A pattern's colors live in the pigment table, out of this rescale's reach.
+                note("finish diffuse with a pattern");
+            } else if (a.finishDiffuse <= 0.0) {
+                // Diffuse zero beside a lit ambient has no scaled form: the pigment would have
+                // to be black for the lamps and colored for the ambient at once.
+                if (m.ambient > 0.0f) {
+                    note("finish diffuse 0");
+                }
+                for (int c = 0; c < 3; ++c) {
+                    m.diffuse[c] = 0.0f;
+                }
+            } else {
+                const double k = a.finishDiffuse / 0.6;
+                for (int c = 0; c < 3; ++c) {
+                    m.diffuse[c] = static_cast<float>(m.diffuse[c] * k);
+                }
+                m.ambient = static_cast<float>(m.ambient / k);
+            }
+        }
+        return materialIndex(m);
+    }
+
     int materialIndex(const Material& m) {
         // Deduplicated: a texture declared once and used fifty times is one material, which is
         // what the file means and what keeps the table inside its limit.
@@ -1901,7 +1942,7 @@ private:
     std::vector<PovToken> m_tok;
     std::map<std::string, double> m_numbers;
     std::map<std::string, std::vector<double>> m_vectors;
-    std::map<std::string, Material> m_textures;
+    std::map<std::string, PovAppearance> m_textures;
     std::vector<Pigment> m_pigments;
     std::vector<Light> m_lights;
     std::map<std::string, PovNode> m_objects;
