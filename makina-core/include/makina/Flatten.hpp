@@ -598,6 +598,16 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         return Fragment{};
     }
 
+    if (op == Op::Sor) {
+        // No GPU form yet: the profile does not fit an 80-byte node. Counted, so the report says
+        // the picture is missing a solid instead of the solid quietly not being there.
+        ++ctx.report.skippedUnsupported;
+        return Fragment{};
+    }
+    if (op == Op::SorPoint) {
+        return Fragment{};
+    }
+
     // Merge, SceneRoot, Unsupported, and every primitive. A primitive with children contributes
     // both its own surface and theirs, which is what the reference evaluator does.
     std::vector<Fragment> parts;

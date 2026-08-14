@@ -44,6 +44,13 @@ enum class Op : std::uint8_t {
     Blob         = 80,
     BlobSphere   = 81,
     BlobCylinder = 82,
+
+    // Revolved profiles (POV's sor). A Sor's children are SorPoints in file order: <radius,
+    // height> control points of a cubic in r-squared over h, revolved about local Y. The first
+    // and last points steer the end slopes and are not on the surface. A point outside a Sor is
+    // inert, like a blob component outside a Blob.
+    Sor      = 96,
+    SorPoint = 97,
 };
 
 inline bool isPrimitive(Op op) {
@@ -130,6 +137,9 @@ inline const OpEntry* opTable(int& count) {
         {Op::BlobSphere,   "BlobSphere",   {"x", "y", "z", "radius", "strength", nullptr}},
         {Op::BlobCylinder, "BlobCylinder", {"x1", "y1", "z1", "x2", "y2", "z2",
                                             "radius", "strength", nullptr}},
+
+        {Op::Sor,          "Sor",          {nullptr}},
+        {Op::SorPoint,     "SorPoint",     {"radius", "height", nullptr}},
     };
     count = static_cast<int>(sizeof(table) / sizeof(table[0]));
     return table;

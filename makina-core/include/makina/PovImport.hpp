@@ -42,6 +42,8 @@
 #include "Op.hpp"
 #include "PovLex.hpp"
 #include "Scene.hpp"
+// For kMaxSorPoints: the reader refuses what the evaluator could not hold, in the same breath.
+#include "SorProfile.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -220,6 +222,17 @@ private:
     ///
     /// This exists because hand-written files say `rotate x*20` and `plane{-y, 0}`, both of which
     /// are arithmetic on a vector rather than a literal.
+    /// A POV 2D vector `<r, h>`, as sor writes its profile points. Literal components only: the
+    /// profile lists in every measured file are plain numbers, and a declared vector here would
+    /// be a 3D one wearing the wrong number of parts.
+    void vector2(double out[2]) {
+        expectPunct('<');
+        out[0] = number();
+        expectPunct(',');
+        out[1] = number();
+        expectPunct('>');
+    }
+
     void vector3(double out[3]) {
         vecTerm(out);
         while (isPunct('+') || isPunct('-')) {
@@ -415,7 +428,6 @@ private:
     static const char* unsupportedShape(const std::string& w) {
         struct Entry { const char* name; const char* why; };
         static const Entry kShapes[] = {
-            {"sor",            "a spline revolved about an axis"},
             {"lathe",          "a spline revolved about an axis"},
             {"prism",          "a spline swept along an axis"},
             {"sphere_sweep",   "a sphere dragged along a spline"},
@@ -453,7 +465,7 @@ private:
         static const char* kStarts[] = {"sphere",     "box",          "cylinder", "cone",
                                         "torus",      "plane",        "disc",     "triangle",
                                         "union",      "merge",        "difference",
-                                        "intersection", "object",     "blob"};
+                                        "intersection", "object",     "blob",     "sor"};
         for (const char* s : kStarts) {
             if (isWord(s)) {
                 return true;
@@ -1072,6 +1084,7 @@ private:
         }
         if (isWord("object")) { return instance(); }
         if (isWord("blob"))   { return readBlob(); }
+        if (isWord("sor"))    { return readSor(); }
         refuse("'" + peek().text + "' does not begin an object");
     }
 
@@ -1429,6 +1442,50 @@ private:
             shapeOf(node).material = materialIndex(appearance);
         }
         return node;
+    }
+
+    /// `sor { N, <r,h>, ... [sturm] mods }`: a profile revolved about local Y.
+    ///
+    /// The heights must climb through the whole list -- POV requires it, and the cross-section
+    /// this model evaluates (Eval.hpp) needs the profile to be a function of height. `open`
+    /// refuses: a capless surface of revolution has no interior and cannot join a CSG solid.
+    PovNode readSor() {
+        take();
+        expectPunct('{');
+        PovNode n = leaf(Op::Sor, "Sor");
+        const int total = static_cast<int>(number());
+        if (total < 4) {
+            refuse("a sor needs at least four points: the outer two only steer the end slopes");
+        }
+        if (total > detail::kMaxSorPoints) {
+            refuse("a sor with more than " + std::to_string(detail::kMaxSorPoints) +
+                   " points is more profile than this model holds");
+        }
+        double prevH = 0.0;
+        for (int i = 0; i < total; ++i) {
+            if (isPunct(',')) {
+                take();
+            }
+            double v[2];
+            vector2(v);
+            if (i > 0 && v[1] <= prevH) {
+                refuse("a sor's heights must strictly increase; point " + std::to_string(i + 1) +
+                       " goes back down");
+            }
+            prevH = v[1];
+            PovNode pt = leaf(Op::SorPoint, "SorPoint");
+            pt.params[0] = static_cast<float>(v[0]);
+            pt.params[1] = static_cast<float>(v[1]);
+            n.children.push_back(std::move(pt));
+        }
+        while (isWord("sturm") || isWord("open")) {
+            if (isWord("open")) {
+                refuse("an open sor has no interior and cannot be a CSG solid");
+            }
+            // sturm tunes POV's root solver, not the surface: the one word read without a note.
+            take();
+        }
+        return modifiers(std::move(n));
     }
 
     /// One blob component: `sphere { <c>, R [, [strength] S] mods }` or

@@ -21,6 +21,7 @@
 
 #include "Fidelity.hpp"
 #include "Scene.hpp"
+#include "SorProfile.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -309,6 +310,42 @@ inline Aabb subtreeBounds(const Scene& s, std::uint16_t index, const Mat4& m, in
             any = true;
         }
         return any ? acc : emptyAabb();
+    }
+
+    if (op == Op::Sor) {
+        // The spline in r-squared can swing past its control points, so the box comes from the
+        // Hermite bound per segment: max endpoint value plus 4/27 * dh * (|m0| + |m1|), which no
+        // point of a cubic Hermite exceeds. Heights cannot overshoot -- the curve is a function
+        // of h -- so Y spans the interior points exactly.
+        double r2[kMaxSorPoints];
+        double h[kMaxSorPoints];
+        const int count = sorControls(s, index, r2, h);
+        if (count < 4) {
+            return emptyAabb();
+        }
+        double maxR2 = 0.0;
+        for (int i = 1; i + 2 < count; ++i) {
+            double dh, m0, m1;
+            sorSegment(r2, h, i, dh, m0, m1);
+            const double top = (r2[i] > r2[i + 1] ? r2[i] : r2[i + 1]) +
+                               (4.0 / 27.0) * std::fabs(dh) * (std::fabs(m0) + std::fabs(m1));
+            if (top > maxR2) {
+                maxR2 = top;
+            }
+        }
+        const double r = std::sqrt(maxR2 > 0.0 ? maxR2 : 0.0);
+        const double corners[8][3] = {
+            {-r, h[1], -r}, {r, h[1], -r}, {-r, h[1], r}, {r, h[1], r},
+            {-r, h[count - 2], -r}, {r, h[count - 2], -r},
+            {-r, h[count - 2], r}, {r, h[count - 2], r}};
+        Aabb box = emptyAabb();
+        for (const double* c : corners) {
+            double w[3];
+            applyMat(m, c, w);
+            expand(box, w);
+        }
+        ++primitiveCount;
+        return box;
     }
 
     Aabb own = emptyAabb();

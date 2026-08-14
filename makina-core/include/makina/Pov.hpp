@@ -256,7 +256,7 @@ inline std::string povTransform(const CsgNode& n) {
 inline int countPovObjects(const Scene& s, std::uint16_t index) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
-    if (isBoolean(op) || op == Op::Blob) {
+    if (isBoolean(op) || op == Op::Blob || op == Op::Sor) {
         return 1;
     }
     int count = isPrimitive(op) ? 1 : 0;
@@ -271,7 +271,7 @@ inline int countPovObjects(const Scene& s, std::uint16_t index) {
 inline std::string bodyMaterial(const Scene& s, std::uint16_t index, bool silhouette) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
-    if (isPrimitive(op) || op == Op::Blob) {
+    if (isPrimitive(op) || op == Op::Blob || op == Op::Sor) {
         return povMaterial(s, n, silhouette);
     }
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
@@ -367,6 +367,30 @@ inline std::string povBlob(const Scene& s, std::uint16_t index, const std::strin
     return out;
 }
 
+/// One `sor { ... }` block: the count, the points in file order, then dress and placement.
+/// sturm is always written -- it asks POV for its accurate root solver and changes no surface,
+/// and the sixth-order intersections of a sor are exactly where the fast solver loses roots.
+inline std::string povSor(const Scene& s, std::uint16_t index, const std::string& transform,
+                          bool silhouette) {
+    const CsgNode& n = s.nodes[index];
+    std::string pts;
+    int total = 0;
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        const CsgNode& c = s.nodes[static_cast<std::uint16_t>(n.firstChild + i)];
+        if (static_cast<Op>(c.op) != Op::SorPoint) {
+            continue;
+        }
+        pts += std::string(total > 0 ? ",\n" : "") + "\t<" + num(c.params[0]) + "," +
+               num(c.params[1]) + ">";
+        ++total;
+    }
+    std::string out = "sor{\n\t" + std::to_string(total) + ",\n" + pts + "\n\tsturm\n";
+    out += povMaterial(s, n, silhouette);
+    out += transform;
+    out += "}\n\n";
+    return out;
+}
+
 /// One subtree.
 ///
 /// `transform` is the block accumulated from the ancestors, `inCsg` says whether a face has to be
@@ -377,10 +401,13 @@ inline std::string povSubtree(const Scene& s, std::uint16_t index, const std::st
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
 
-    // Whole in one hand: the children are components, not objects, so the generic child walk
-    // below must not see them.
+    // Whole in one hand: the children are components or control points, not objects, so the
+    // generic child walk below must not see them.
     if (op == Op::Blob) {
         return povBlob(s, index, transform, silhouette);
+    }
+    if (op == Op::Sor) {
+        return povSor(s, index, transform, silhouette);
     }
 
     // A transform prepends to the block, so the outermost transform is applied last -- POV reads

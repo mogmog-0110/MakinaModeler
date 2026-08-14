@@ -275,9 +275,10 @@ void surveyAgreesWithReader(const std::string& pov) {
             }
         }
     }
-    const makina::PovSurveyResult dirty = makina::povSurvey(pov + "\nsor { 2, <0,0>, <1,1> }");
+    const makina::PovSurveyResult dirty =
+        makina::povSurvey(pov + "\nlathe { linear_spline 3, <0,0>, <1,1>, <0,2> }");
     if (dirty.clean) {
-        throw std::runtime_error("the survey missed a 'sor' appended to the file");
+        throw std::runtime_error("the survey missed a 'lathe' appended to the file");
     }
 }
 
@@ -381,7 +382,7 @@ void boundaries() {
     // Shapes POV can trace and this model cannot hold. The message has to name the shape: the
     // word would otherwise reach the expression parser and be reported as not being a number,
     // which says where the parser was rather than what the file asked for.
-    refuses("#declare S = sor { 3, <0,0>,<1,1>,<0,2> }", "revolved about an axis");
+    refuses("#declare S = sor { 3, <0,0>,<1,1>,<0,2> }", "at least four points");
     refuses("isosurface { function { x*x } }", "given by a function");
     refuses("sphere{<0,0,0>,rand(R)}", "is a function call");
     refuses("box{<0,0,0>,<1,1,1> scale <0,1,1>}", "collapses");
@@ -612,6 +613,71 @@ void blobImport() {
           "blob component texture");
 }
 
+/// sor: reading, the solid it evaluates to, and the write/read round trip.
+///
+/// The geometry oracles: a profile whose radii are all equal must evaluate as the capped
+/// cylinder it describes (straight segments, so the polyline walk is exact), and any profile
+/// must pass through its interior control points -- the spline interpolates them by
+/// construction, so a surface that misses one misread the file.
+void sorImport() {
+    std::printf("sor reads, evaluates, and round-trips\n");
+    const auto at = [](const makina::Scene& s, double x, double y, double z) {
+        const double p[3] = {x, y, z};
+        return makina::eval(s, p);
+    };
+
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sor { 4, <0.5,-0.5>, <0.5,0>, <0.5,1>, <0.5,1.5> }");
+        check(r.unsupported.empty(), "the cylinder-profile sor should read whole");
+        const double probes[5][3] = {
+            {0.9, 0.5, 0}, {0.2, 0.5, 0}, {0, 0.5, 0}, {0, 1.4, 0}, {0.3, -0.2, 0}};
+        for (const double* p : probes) {
+            const double rho = std::sqrt(p[0] * p[0] + p[2] * p[2]);
+            const double dr = rho - 0.5;
+            const double dy = std::fabs(p[1] - 0.5) - 0.5;
+            const double truth = dr > 0.0 && dy > 0.0 ? std::sqrt(dr * dr + dy * dy)
+                                                      : (dr > dy ? dr : dy);
+            check(std::fabs(at(r.scene, p[0], p[1], p[2]) - truth) < 1e-6,
+                  "the flat-profile sor should evaluate as its capped cylinder");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the cylinder-profile sor was refused: ") + e.what());
+    }
+
+    // pingu.pov's body profile, verbatim: the surface must pass through the interior points.
+    const char* const kBody =
+        "sor { 8, <0.14,-0.12>, <0.03,0.02>, <0.34,0.14>, <0.508,0.42>, <0.472,0.84>, "
+        "<0.385,1.24>, <0.03,1.50>, <0.14,1.64> sturm }";
+    try {
+        const makina::PovImportResult r = makina::importPov(kBody);
+        check(r.unsupported.empty(), "the body-profile sor should read whole");
+        const double interior[6][2] = {{0.03, 0.02},  {0.34, 0.14}, {0.508, 0.42},
+                                       {0.472, 0.84}, {0.385, 1.24}, {0.03, 1.50}};
+        for (const double* q : interior) {
+            check(std::fabs(at(r.scene, q[0], q[1], 0)) < 1e-4,
+                  "the surface should pass through the control point at h=" +
+                      std::to_string(q[1]));
+        }
+        check(at(r.scene, 0, 0.7, 0) < 0.0, "the axis inside the body should be inside");
+        check(at(r.scene, 1.0, 0.7, 0) > 0.0, "well off the profile should be outside");
+
+        makina::PovOptions opt;
+        const makina::PovImportResult back = makina::importPov(makina::writePov(r.scene, opt));
+        const double pts[3][3] = {{0.508, 0.42, 0}, {0, 0.7, 0}, {0.6, 0.9, 0}};
+        for (const double* p : pts) {
+            check(std::fabs(at(r.scene, p[0], p[1], p[2]) - at(back.scene, p[0], p[1], p[2])) <
+                      1e-6,
+                  "the round-tripped sor evaluates differently");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the body-profile sor was refused: ") + e.what());
+    }
+
+    refuses("sor { 4, <0.5,0>, <0.5,1>, <0.5,0.5>, <0.5,2> }", "strictly increase");
+    refuses("sor { 4, <0.5,-0.5>, <0.5,0>, <0.5,1>, <0.5,1.5> open }", "no interior");
+}
+
 /// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
 ///
 /// The two spellings reach the material through different code paths (a flat pigment reads its
@@ -655,6 +721,7 @@ int main(int argc, char** argv) {
         boundaries();
         macroExpansion();
         blobImport();
+        sorImport();
         srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

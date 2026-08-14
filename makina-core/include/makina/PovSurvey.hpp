@@ -90,6 +90,8 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"radial", PovStatus::Supported, ""},
         {"interior", PovStatus::Supported, "ior"},
         {"blob", PovStatus::Supported, "sphere and cylinder components"},
+        {"sor", PovStatus::Supported, "closed only; open is refused"},
+        {"sturm", PovStatus::Ignored, "tunes POV's root solver, not the surface"},
         {"camera", PovStatus::Supported, "perspective / orthographic / fisheye / ultra_wide_angle / panoramic"},
         {"light_source", PovStatus::Supported, "point lights; softness is out of scope by policy"},
         // Language the reader evaluates.
@@ -105,7 +107,6 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"sky_sphere", PovStatus::Ignored, ""},
         // Shapes the model has no form for. Mirrors the importer's refusal table; the
         // cross-check keeps the two lists honest.
-        {"sor", PovStatus::UnsupportedShape, "a spline revolved about an axis"},
         {"lathe", PovStatus::UnsupportedShape, "a spline revolved about an axis"},
         {"prism", PovStatus::UnsupportedShape, "a spline swept along an axis"},
         {"sphere_sweep", PovStatus::UnsupportedShape, "a sphere dragged along a spline"},
