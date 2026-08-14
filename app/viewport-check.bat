@@ -229,6 +229,20 @@ echo    toolbar
     >"%OUT%\added.log" 2>&1
 call :present added 88 "the toolbar has to be able to add a shape"
 
+REM A row dragged onto another, all the way to the tree. The pointer path is the same one
+REM --click takes; what this adds is the binder-side drag (grab, 4px threshold, drop) and
+REM the edit.reparent dispatch. (100,245) is the row for node 11 and (100,105) resolved to
+REM node 3 by measurement; the parent assertion pins the reparent, because a byte
+REM difference alone would also pass on any stray edit.
+echo    reparent
+"%EXE%" "%SCENE%" --frames 200 --dragui "100,245,100,105" --save "%OUT%\reparent.json" >"%OUT%\reparent.log" 2>&1
+call :differs reparent "dragging a row onto another must change the tree"
+python "%HERE%parent_of.py" "%OUT%\reparent.json" 11 3
+if errorlevel 1 (
+    echo       FAILED [reparent]: node 11 did not land under node 3
+    set FAILED=1
+)
+
 REM Isolate: only the selected subtree in the picture, and a way back.
 REM
 REM Three shots with the same selection. The base and the isolated one must differ (otherwise
