@@ -188,6 +188,21 @@ echo    button
 call :diffAs clickmute noclick "the toolbar button has to reach the tree"
 call :present clickmute 13 "muting must not remove the node"
 
+REM The outliner, both ways.
+REM
+REM The tree already shows what is selected -- the "view state" case above proves the highlight
+REM travels from C++ to the page. This is the other direction: clicking a row has to select that
+REM node, and it cannot go through the viewport's own select.pick, which means "whatever is under
+REM the cursor" and would fire a ray from a cursor sitting on the panel.
+REM
+REM Node 13 goes in selected and (100,245) is the row for node 11, so a passing run is one where
+REM the selection moved from one to the other rather than merely changing.
+echo    outliner
+"%EXE%" "%SCENE%" --select "13" --frames 150 --click "100,245" ^
+    --dump-state "%OUT%\rowpick.json" >"%OUT%\rowpick.log" 2>&1
+call :inFile rowpick "id.:11,[^{]*selected.:true" "clicking a row has to select that node"
+call :inFile rowpick "id.:13,[^{]*selected.:false" "and has to let go of the one before it"
+
 echo.
 if "%FAILED%"=="0" (
     echo    the viewport edits what the keys say
@@ -237,6 +252,20 @@ if not exist "%OUT%\%~1.ppm" (
 )
 fc /b "%OUT%\%~1.ppm" "%OUT%\%~2.ppm" >nul 2>&1
 if not errorlevel 1 (
+    echo       FAILED [%~1]: %~3
+    set FAILED=1
+)
+exit /b 0
+
+REM Like :inState, but naming which dump to look in.
+:inFile
+if not exist "%OUT%\%~1.json" (
+    echo       FAILED [%~1]: no view state was written
+    set FAILED=1
+    exit /b 0
+)
+findstr /R /C:"%~2" "%OUT%\%~1.json" >nul 2>&1
+if errorlevel 1 (
     echo       FAILED [%~1]: %~3
     set FAILED=1
 )
