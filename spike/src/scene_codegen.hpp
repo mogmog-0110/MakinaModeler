@@ -89,10 +89,32 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n,
     o << ") * " << flt(n.params[3]) << ";\n";
 }
 
-/// BlobFinish's expression over an already-generated field value: the one unary op.
-inline std::string blobFinishExpr(const makina::EvalNode& n, const std::string& field) {
-    return "(" + flt(n.params[0]) + " - " + field + ") / " + flt(n.params[1]) + " * " +
-           flt(n.params[3]);
+/// BlobFinish's lines: the field bound, and when the node carries a support box (params[2] > 0)
+/// the distance to it, larger wins -- the same two bounds evalBlobFinish takes on the CPU.
+inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalNode& n, std::size_t i,
+                                const char* prefix, const std::string& field,
+                                const std::string& var) {
+    const std::string d = "(" + flt(n.params[0]) + " - " + field + ") / " + flt(n.params[1]) +
+                          " * " + flt(n.params[3]);
+    if (n.params[2] <= 0.0f) {
+        o << "    float " << var << " = " << d << ";\n";
+        return;
+    }
+    const std::string q = std::string(prefix) + "q" + std::to_string(i);
+    o << "    float3 " << q << " = float3(";
+    for (int r = 0; r < 3; ++r) {
+        o << "dot(float4(" << flt(n.inv[r * 4 + 0]) << ", " << flt(n.inv[r * 4 + 1]) << ", "
+          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(wp, 1.0))"
+          << (r < 2 ? ", " : "");
+    }
+    o << ");\n";
+    // Strictly outside the box only, same guard as evalBlobFinish: within it the box term is
+    // zero or negative and must not pass through the max.
+    const std::string b = q + "b";
+    o << "    float " << b << " = (max(max(abs(" << q << ".x), abs(" << q << ".y)), abs(" << q
+      << ".z)) - 1.0) * " << flt(n.params[2]) << ";\n";
+    o << "    float " << var << " = " << b << " > 0.0 ? max(" << d << ", " << b << ") : (" << d
+      << ");\n";
 }
 
 }  // namespace detail
@@ -206,7 +228,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
                                          "field to close");
             }
             const std::string field = stack.back();  stack.pop_back();
-            o << "    float " << var << " = " << detail::blobFinishExpr(n, field) << ";\n";
+            detail::emitBlobFinishLines(o, n, i, "", field, var);
             stack.push_back(var);
             continue;
         }
@@ -282,8 +304,9 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
             const std::string field = stack.back();  stack.pop_back();
             // The finish node is the blob's one surface, so it carries the material; the
             // density leaves below it never win a comparison.
-            o << "    float3 " << var << " = float3("
-              << detail::blobFinishExpr(n, field + ".x") << ", "
+            const std::string dist = var + "d";
+            detail::emitBlobFinishLines(o, n, i, "m", field + ".x", dist);
+            o << "    float3 " << var << " = float3(" << dist << ", "
               << detail::flt(static_cast<float>(n.materialId)) << ", "
               << detail::flt(n.pigmentId == makina::kNoPigment
                                  ? -1.0f

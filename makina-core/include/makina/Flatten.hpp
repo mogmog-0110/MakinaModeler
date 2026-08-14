@@ -371,7 +371,8 @@ inline bool emitPrimitive(FlattenContext& ctx, const CsgNode& n, const Mat4& wor
 /// the same quantity Eval.hpp's field walk tracks as minScale. The leaf's own params[3] stays 1:
 /// a density is a scalar composed with the inverse transform and needs no distance correction.
 inline void collectBlobLeaves(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
-                              double corr, double blobCorr, Fragment& leaves, double& lipschitz) {
+                              double corr, double blobCorr, Fragment& leaves, double& lipschitz,
+                              double lo[3], double hi[3]) {
     const CsgNode& n = ctx.scene->nodes[index];
     const Op op = static_cast<Op>(n.op);
 
@@ -380,7 +381,7 @@ inline void collectBlobLeaves(FlattenContext& ctx, std::uint16_t index, const Ma
         const double c = corr * scaleFactorOf(n);
         for (std::uint16_t i = 0; i < n.childCount; ++i) {
             collectBlobLeaves(ctx, static_cast<std::uint16_t>(n.firstChild + i), child, c,
-                              blobCorr, leaves, lipschitz);
+                              blobCorr, leaves, lipschitz, lo, hi);
         }
         return;
     }
@@ -455,13 +456,28 @@ inline void collectBlobLeaves(FlattenContext& ctx, std::uint16_t index, const Ma
             e.inv[r] = static_cast<float>(inv.m[r]);
         }
         lipschitz += blobLipschitz(radius, strength) / nz(corr / blobCorr);
+
+        // The support box in world space, for the finish node: the canonical support is a box
+        // around the component, and its world corners grow the blob-wide box.
+        const bool cyl = e.op == static_cast<std::uint32_t>(EvalOp::BlobCylinder);
+        const double half[3] = {radius, cyl ? e.params[1] + radius : radius, radius};
+        for (int c = 0; c < 8; ++c) {
+            const double corner[3] = {c & 1 ? half[0] : -half[0], c & 2 ? half[1] : -half[1],
+                                      c & 4 ? half[2] : -half[2]};
+            double w[3];
+            applyMat(full, corner, w);
+            for (int k = 0; k < 3; ++k) {
+                if (w[k] < lo[k]) lo[k] = w[k];
+                if (w[k] > hi[k]) hi[k] = w[k];
+            }
+        }
         leaves.push_back(e);
         return;
     }
 
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
         collectBlobLeaves(ctx, static_cast<std::uint16_t>(n.firstChild + i), world, corr,
-                          blobCorr, leaves, lipschitz);
+                          blobCorr, leaves, lipschitz, lo, hi);
     }
 }
 
@@ -469,17 +485,21 @@ inline void collectBlobLeaves(FlattenContext& ctx, std::uint16_t index, const Ma
 /// keeps the stack two deep, so balancing would buy nothing -- then one BlobFinish carrying
 /// the threshold, the Lipschitz bound, and the blob's own distance correction.
 ///
-/// The program's blob differs from Eval.hpp's in one measured way: it has no
-/// distance-to-support sharpening, so far from the blob it steps by threshold/L instead of by
-/// the true clearance. Same sign everywhere, both conservative; the march is slower, not wrong.
+/// The finish node also carries the world box of every support: an inverse into unit-box
+/// space in its otherwise unused transform, the smallest half-extent in params[2]. Without it
+/// the bound is threshold/L everywhere outside the supports -- a floor so small that a whole
+/// scene starves its step budget crossing empty space and the picture goes black (measured on
+/// pingu: the beak's 0.02 floor times 96 steps never covered the 4-unit approach).
 inline Fragment emitBlob(FlattenContext& ctx, std::uint16_t index, const Mat4& world,
                          const Mat4& textureWorld, double scaleCorrection) {
     const CsgNode& n = ctx.scene->nodes[index];
     Fragment leaves;
     double lipschitz = 0.0;
+    double lo[3] = {1e60, 1e60, 1e60};
+    double hi[3] = {-1e60, -1e60, -1e60};
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
         collectBlobLeaves(ctx, static_cast<std::uint16_t>(n.firstChild + i), world,
-                          scaleCorrection, scaleCorrection, leaves, lipschitz);
+                          scaleCorrection, scaleCorrection, leaves, lipschitz, lo, hi);
     }
     if (leaves.empty() || lipschitz <= 0.0) {
         // No components is no geometry, same as Eval.hpp's kEmpty.
@@ -504,6 +524,24 @@ inline Fragment emitBlob(FlattenContext& ctx, std::uint16_t index, const Mat4& w
     f.params[0] = n.params[0];
     f.params[1] = static_cast<float>(lipschitz);
     f.params[3] = static_cast<float>(scaleCorrection);
+    f.params[2] = 0.0f;
+    {
+        const double half[3] = {(hi[0] - lo[0]) * 0.5, (hi[1] - lo[1]) * 0.5,
+                                (hi[2] - lo[2]) * 0.5};
+        const double c[3] = {(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5,
+                             (lo[2] + hi[2]) * 0.5};
+        const Mat4 box{{half[0], 0, 0, c[0], 0, half[1], 0, c[1], 0, 0, half[2], c[2],
+                        0, 0, 0, 1}};
+        Mat4 boxInv{};
+        if (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0 && invertAffine(box, boxInv)) {
+            for (int r = 0; r < 12; ++r) {
+                f.inv[r] = static_cast<float>(boxInv.m[r]);
+            }
+            const double m = half[0] < half[1] ? (half[0] < half[2] ? half[0] : half[2])
+                                               : (half[1] < half[2] ? half[1] : half[2]);
+            f.params[2] = static_cast<float>(m);
+        }
+    }
     f.materialId = resolveMaterial(*ctx.scene, n);
     f.pigmentId = kNoPigment;
     if (f.materialId < ctx.scene->materials.count) {
@@ -793,8 +831,25 @@ inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double 
 }
 
 /// BlobFinish's arithmetic, shared by both walkers so the field/distance bridge cannot drift.
-inline double evalBlobFinish(const EvalNode& n, double field) {
-    return (static_cast<double>(n.params[0]) - field) / n.params[1] * n.params[3];
+///
+/// Two lower bounds, and the larger wins: the Lipschitz one from the summed field, and the
+/// distance to the box every support sits inside -- zero within the box, so it never fights
+/// the field where the field is live. params[2] of 0 means the box was degenerate and only the
+/// field bound speaks.
+inline double evalBlobFinish(const EvalNode& n, double field, const double wp[3]) {
+    const double d = (static_cast<double>(n.params[0]) - field) / n.params[1] * n.params[3];
+    if (n.params[2] <= 0.0f) {
+        return d;
+    }
+    const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];
+    const double y = n.inv[4] * wp[0] + n.inv[5] * wp[1] + n.inv[6] * wp[2] + n.inv[7];
+    const double z = n.inv[8] * wp[0] + n.inv[9] * wp[1] + n.inv[10] * wp[2] + n.inv[11];
+    const double ax = std::fabs(x), ay = std::fabs(y), az = std::fabs(z);
+    const double m = (ax > ay ? (ax > az ? ax : az) : (ay > az ? ay : az)) - 1.0;
+    // Strictly outside the box only: within it the distance is zero, and a zero through the max
+    // would erase the negative interior -- the same trap evalBlob's support bound stepped in.
+    const double box = m * n.params[2];
+    return box > 0.0 && box > d ? box : d;
 }
 
 /// Walks the emitted program on the CPU, with exactly the semantics the shader implements.
@@ -815,7 +870,7 @@ inline double evalProgram(const EvalProgram& prog, const double wp[3]) {
             if (sp < 1) {
                 return kEmpty;
             }
-            stack[sp - 1] = evalBlobFinish(n, stack[sp - 1]);
+            stack[sp - 1] = evalBlobFinish(n, stack[sp - 1], wp);
             continue;
         }
         if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
@@ -875,7 +930,7 @@ inline ProgramSurface evalProgramSurface(const EvalProgram& prog, const double w
             // The whole blob is one surface, and the finish node is what wears its material --
             // the density leaves below it never surface on their own.
             ProgramSurface r;
-            r.distance = evalBlobFinish(n, stack[sp - 1].distance);
+            r.distance = evalBlobFinish(n, stack[sp - 1].distance, wp);
             r.materialId = n.materialId;
             r.pigmentId = n.pigmentId;
             stack[sp - 1] = r;
