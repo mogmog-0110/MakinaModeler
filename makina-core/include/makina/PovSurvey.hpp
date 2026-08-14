@@ -94,6 +94,7 @@ inline const std::vector<PovWordClass>& povWordTable() {
         // Language the reader evaluates.
         {"#declare", PovStatus::Supported, "numbers, vectors, textures, transforms, objects"},
         {"#local", PovStatus::Supported, ""},
+        {"#macro", PovStatus::Supported, "expanded by token substitution at the call"},
         {"#include", PovStatus::Supported, "read relative to the including file"},
         {"#version", PovStatus::Ignored, ""},
         // Read and dropped on purpose: none of these move a surface.
@@ -119,7 +120,9 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"text", PovStatus::UnsupportedShape, "glyphs from a font"},
         {"bicubic_patch", PovStatus::UnsupportedShape, "a bicubic patch"},
         // Language the reader does not evaluate.
-        {"#macro", PovStatus::UnsupportedLanguage, "expansion is not implemented yet"},
+        {"rand", PovStatus::UnsupportedLanguage,
+         "POV's own generator; only its measured stream would match"},
+        {"seed", PovStatus::UnsupportedLanguage, ""},
         {"#while", PovStatus::UnsupportedLanguage, ""},
         {"#for", PovStatus::UnsupportedLanguage, ""},
         {"#if", PovStatus::UnsupportedLanguage, ""},

@@ -509,6 +509,39 @@ void boundaries() {
     }
 }
 
+/// #macro definition, call, parameter substitution, and the refusals around them.
+///
+/// Geometry is asserted through world bounds, stated independently of the expansion: a macro
+/// that expanded to the wrong tokens would still parse into *something*, and only the resulting
+/// solid's extent tells the two apart.
+void macroExpansion() {
+    std::printf("#macro expands at the call\n");
+
+    // A parameter used twice, once negated, and an expression as the argument.
+    const char* const kPair =
+        "#macro Pair(S) union { sphere{<S,0,0>,1} sphere{<-S,0,0>,1} } #end\n";
+    for (const char* call : {"object { Pair(2) }", "object { Pair(1+1) }"}) {
+        const makina::PovImportResult r = makina::importPov(std::string(kPair) + call);
+        const makina::Aabb box = makina::worldBounds(r.scene).box;
+        check(box.valid && std::fabs(box.lo[0] + 3.0) < 1e-5 && std::fabs(box.hi[0] - 3.0) < 1e-5,
+              std::string("'") + call + "' should span -3..3 in x");
+    }
+
+    // A macro whose body calls another macro: the spliced tokens are read by the same parser,
+    // so the inner call must expand too.
+    const makina::PovImportResult nested = makina::importPov(
+        "#macro Ball() sphere{<0,0,0>,1} #end\n"
+        "#macro Two() union { object{ Ball() } object{ Ball() translate <4,0,0> } } #end\n"
+        "object { Two() }");
+    const makina::Aabb box = makina::worldBounds(nested.scene).box;
+    check(box.valid && std::fabs(box.lo[0] + 1.0) < 1e-5 && std::fabs(box.hi[0] - 5.0) < 1e-5,
+          "a macro called from a macro should place both spheres");
+
+    refuses("#macro Pair(S) union { sphere{<S,0,0>,1} } #end object { Pair(1,2) }", "expects");
+    refuses("#macro Loop() object { Loop() } #end object { Loop() }", "does not terminate");
+    refuses("#macro F() sphere{<0,0,0>,1}", "not closed with #end");
+}
+
 /// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
 ///
 /// The two spellings reach the material through different code paths (a flat pigment reads its
@@ -550,6 +583,7 @@ int main(int argc, char** argv) {
 
     try {
         boundaries();
+        macroExpansion();
         srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

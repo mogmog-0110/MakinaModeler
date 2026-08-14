@@ -79,6 +79,12 @@ struct PovMove {
     double      v[3]{};
 };
 
+/// A `#macro`: its parameter names and its body, kept as the tokens that were written.
+struct PovMacro {
+    std::vector<std::string> params;
+    std::vector<PovToken>    body;
+};
+
 /// One parse in progress: the token stream, the symbol tables, and the tree being built.
 class PovReader {
 public:
@@ -336,9 +342,15 @@ private:
     // ---------------------------------------------------------------- top level
 
     void readTopLevel(PovNode& root) {
+        while (expandIfMacro()) {}
         const PovToken t = peek();
 
         if (t.kind == PovTokenKind::Directive) {
+            if (t.text == "#macro") {
+                take();
+                readMacroDefinition();
+                return;
+            }
             if (t.text == "#version") {
                 take();
                 while (!isPunct(';') && peek().kind != PovTokenKind::End) { take(); }
@@ -457,6 +469,7 @@ private:
         }
         const std::string name = take().text;
         expectPunct('=');
+        while (expandIfMacro()) {}
         refuseUnsupportedShape();
 
         if (isWord("texture") || isWord("pigment") || isWord("finish") || isWord("normal")) {
@@ -480,6 +493,171 @@ private:
         }
         m_numbers[name] = number();
         if (isPunct(';')) { take(); }
+    }
+
+    // -------------------------------------------------------------------- macros
+
+    /// `#macro Name(A, B) ... #end`: the body is captured as raw tokens, unparsed.
+    ///
+    /// Parsing at definition time would refuse a macro that is never called for something its
+    /// caller would never reach; POV itself only reads a body on invocation, and agreeing with
+    /// that is what lets a file define more than this subset and still load.
+    void readMacroDefinition() {
+        if (peek().kind != PovTokenKind::Word) {
+            refuse("#macro needs a name");
+        }
+        PovMacro mac;
+        const std::string name = take().text;
+        expectPunct('(');
+        while (!isPunct(')')) {
+            if (peek().kind != PovTokenKind::Word) {
+                refuse("#macro parameters must be names");
+            }
+            mac.params.push_back(take().text);
+            if (isPunct(',')) {
+                take();
+            }
+        }
+        take();
+
+        // To the matching #end. #while / #for / #switch close with #end too, so depth counts
+        // them; a nested #macro is refused because POV refuses it (public reference, 3.7).
+        int depth = 0;
+        while (true) {
+            const PovToken& t = peek();
+            if (t.kind == PovTokenKind::End) {
+                refuse("a #macro was not closed with #end");
+            }
+            if (t.kind == PovTokenKind::Directive) {
+                if (t.text == "#macro") {
+                    refuse("a #macro inside a #macro");
+                }
+                if (t.text == "#while" || t.text == "#for" || t.text == "#switch") {
+                    ++depth;
+                } else if (t.text == "#end") {
+                    if (depth == 0) {
+                        take();
+                        break;
+                    }
+                    --depth;
+                }
+            }
+            mac.body.push_back(take());
+        }
+        m_macros[name] = std::move(mac);
+    }
+
+    /// Expands `Name(args)` in place when Name is a defined macro. Returns whether it did.
+    ///
+    /// Expansion is token substitution: each argument is captured verbatim and spliced where the
+    /// parameter's name appears, and the result is inserted into the stream for the ordinary
+    /// parser to read. POV evaluates arguments at the call instead, which differs only when a
+    /// name is redefined between call and use -- a file relying on that is refused by the
+    /// expansion limit rather than misread, since the limit is the only place this shortcut can
+    /// surface.
+    bool expandIfMacro() {
+        if (peek().kind != PovTokenKind::Word || !isPunct('(', 1)) {
+            return false;
+        }
+        const auto it = m_macros.find(peek().text);
+        if (it == m_macros.end()) {
+            return false;
+        }
+        const std::string name = take().text;
+        take();
+
+        // Each argument's raw tokens. Only a comma at depth zero separates: one inside <...> or
+        // (...) belongs to the vector or call it sits in.
+        std::vector<std::vector<PovToken>> args;
+        int paren = 0;
+        int angle = 0;
+        while (!(isPunct(')') && paren == 0 && angle == 0)) {
+            const PovToken& t = peek();
+            if (t.kind == PovTokenKind::End) {
+                refuse("the call of macro '" + name + "' was not closed");
+            }
+            if (args.empty()) {
+                args.emplace_back();
+            }
+            if (t.kind == PovTokenKind::Punct) {
+                const char c = t.text[0];
+                if (c == '(') { ++paren; }
+                if (c == ')') { --paren; }
+                if (c == '<') { ++angle; }
+                if (c == '>') { --angle; }
+                if (c == ',' && paren == 0 && angle == 0) {
+                    take();
+                    args.emplace_back();
+                    continue;
+                }
+            }
+            args.back().push_back(take());
+        }
+        take();
+
+        const PovMacro& mac = it->second;
+        if (args.size() != mac.params.size()) {
+            refuse("macro '" + name + "' expects " + std::to_string(mac.params.size()) +
+                   " argument(s) and was called with " + std::to_string(args.size()));
+        }
+
+        // POV evaluates arguments at the call, and for numbers this must not be skipped: spliced
+        // raw, Pair(1+1) puts `-1+1` where the body wrote `-S`, and the minus binds to the first
+        // token alone. Anything that does not read whole as an expression -- a texture name, an
+        // object -- splices raw, which is the case substitution is right for.
+        for (std::vector<PovToken>& a : args) {
+            if (a.empty()) {
+                continue;
+            }
+            std::vector<PovToken> probe = a;
+            PovToken end = probe.back();
+            end.kind = PovTokenKind::End;
+            end.text.clear();
+            probe.push_back(end);
+            std::swap(m_tok, probe);
+            const std::size_t at = m_at;
+            m_at = 0;
+            bool numeric = false;
+            double v = 0.0;
+            try {
+                v = number();
+                numeric = peek().kind == PovTokenKind::End;
+            } catch (const PovParseError&) {
+            }
+            std::swap(m_tok, probe);
+            m_at = at;
+            if (numeric) {
+                PovToken n = a.front();
+                n.kind = PovTokenKind::Number;
+                n.number = v;
+                a.assign(1, n);
+            }
+        }
+        // A macro that reaches itself grows the stream forever; there is no legitimate call
+        // chain anywhere near this deep in a scene file.
+        if (++m_expansions > 1000) {
+            refuse("macro expansion does not terminate (at '" + name + "')");
+        }
+
+        std::vector<PovToken> out;
+        for (const PovToken& t : mac.body) {
+            std::size_t p = mac.params.size();
+            if (t.kind == PovTokenKind::Word) {
+                for (std::size_t i = 0; i < mac.params.size(); ++i) {
+                    if (t.text == mac.params[i]) {
+                        p = i;
+                        break;
+                    }
+                }
+            }
+            if (p < mac.params.size()) {
+                out.insert(out.end(), args[p].begin(), args[p].end());
+            } else {
+                out.push_back(t);
+            }
+        }
+        m_tok.insert(m_tok.begin() + static_cast<std::ptrdiff_t>(m_at), out.begin(), out.end());
+        return true;
     }
 
     // ---------------------------------------------------------------- appearance
@@ -1179,6 +1357,7 @@ private:
             if (peek().kind == PovTokenKind::End) {
                 refuse("a " + kind + " block was not closed");
             }
+            while (expandIfMacro()) {}
             refuseUnsupportedShape();
             if (!isObjectStart()) {
                 break;
@@ -1197,6 +1376,7 @@ private:
     PovNode instance() {
         take();
         expectPunct('{');
+        while (expandIfMacro()) {}
         if (isObjectStart()) {
             return modifiers(readObject());
         }
@@ -1476,6 +1656,9 @@ private:
     std::vector<Light> m_lights;
     std::map<std::string, PovNode> m_objects;
     std::map<std::string, std::vector<PovMove>> m_transforms;
+    std::map<std::string, PovMacro> m_macros;
+    /// Total macro expansions so far; the bound that turns recursion into a refusal.
+    int m_expansions = 0;
     /// The components past the third of the last `<...>` literal read.
     ///
     /// A side channel, because the vector grammar is shared with geometry and widening every
