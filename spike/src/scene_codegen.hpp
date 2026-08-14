@@ -160,7 +160,30 @@ inline std::string generateSorHelpers(const makina::EvalProgram& prog) {
           << "    return j < " << num << " ? kSorSide" << i << "[j]\n"
           << "        : float2(-kSorSide" << i << "[" << last << " - j].x, kSorSide" << i << "["
           << last << " - j].y);\n}\n";
+
+        // The enclosing cylinder in (rho, y), for the early-out below. The surface sits inside
+        // it, so its distance is a lower bound and returning it skips the polyline loop for
+        // every march step that is not near this sor -- without it, three sors put a full
+        // 1280x720 frame past the GPU watchdog (~17 s measured on pingu).
+        float rMax = 0.0f;
+        float y0 = prog.sorProfiles[offset + 1];
+        float y1 = prog.sorProfiles[offset + 2 * (num - 1) + 1];
+        for (int k = 0; k < num; ++k) {
+            const float rk = prog.sorProfiles[offset + 2 * k];
+            rMax = rk > rMax ? rk : rMax;
+        }
+        // The margin keeps the early-out from becoming a surface of its own: the bound reaches
+        // zero AT the cylinder wall, and a march handed a near-zero step declares a hit there --
+        // the first run of this drew the bounding cylinders, fat and solid. Inside the margin
+        // shell the loop runs and answers exactly.
+        const float sorMargin = 0.05f * (rMax + (y1 - y0));
         o << "float sorDist" << i << "(float px, float py) {\n"
+          << "    float drO = px - " << detail::flt(rMax) << ";\n"
+          << "    float dyO = abs(py - " << detail::flt((y0 + y1) * 0.5f) << ") - "
+          << detail::flt((y1 - y0) * 0.5f) << ";\n"
+          << "    float farO = (drO > 0.0 && dyO > 0.0) ? sqrt(drO * drO + dyO * dyO)\n"
+          << "                                          : max(drO, dyO);\n"
+          << "    if (farO > " << detail::flt(sorMargin) << ") { return farO; }\n"
           << "    float d = 1.0e30;\n"
           << "    float sgn = 1.0;\n"
           << "    int j = " << last << ";\n"
@@ -206,7 +229,28 @@ inline std::string generateSweepHelpers(const makina::EvalProgram& prog) {
               << (k + 1 < num ? ",\n" : "\n");
         }
         o << "};\n";
+
+        // The box every swept sphere sits inside, for the same early-out the sor helper takes.
+        float lo[3] = {1e30f, 1e30f, 1e30f};
+        float hi[3] = {-1e30f, -1e30f, -1e30f};
+        for (int k = 0; k < num; ++k) {
+            const float* q = prog.sweepProfiles.data() + offset + 4 * k;
+            for (int c = 0; c < 3; ++c) {
+                lo[c] = q[c] - q[3] < lo[c] ? q[c] - q[3] : lo[c];
+                hi[c] = q[c] + q[3] > hi[c] ? q[c] + q[3] : hi[c];
+            }
+        }
+        // Same margin rule as the sor helper: the box bound reaches zero at the box wall, and
+        // returning it there would let the march declare a hit on the box itself.
+        const float sweepMargin =
+            0.05f * ((hi[0] - lo[0]) + (hi[1] - lo[1]) + (hi[2] - lo[2]));
         o << "float sweepDist" << i << "(float3 p) {\n"
+          << "    float3 ovr = max(max(float3(" << detail::flt(lo[0]) << ", "
+          << detail::flt(lo[1]) << ", " << detail::flt(lo[2]) << ") - p, p - float3("
+          << detail::flt(hi[0]) << ", " << detail::flt(hi[1]) << ", " << detail::flt(hi[2])
+          << ")), float3(0.0, 0.0, 0.0));\n"
+          << "    float farO = length(ovr);\n"
+          << "    if (farO > " << detail::flt(sweepMargin) << ") { return farO; }\n"
           << "    float d = 1.0e30;\n"
           << "    [loop] for (int k = 0; k + 1 < " << num << "; ++k) {\n"
           << "        float4 a = kSweep" << i << "[k];\n"

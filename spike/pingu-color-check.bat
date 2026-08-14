@@ -15,10 +15,8 @@ set SCENE=%HERE%pingu_model.makina.json
 set POVRAY=D:\sandbox\Grasp3D\povray\bin\povray.exe
 set POVINC=D:\sandbox\Grasp3D\povray\include
 
-REM 320x180 for the same reason pingu-silhouette-check gives: the sor loops put a full
-REM frame past the GPU watchdog until per-node bound culling lands.
-set WIDTH=320
-set HEIGHT=180
+set WIDTH=1280
+set HEIGHT=720
 
 if not exist "%POVRAY%" (
     echo ERROR: POV-Ray not found at "%POVRAY%"

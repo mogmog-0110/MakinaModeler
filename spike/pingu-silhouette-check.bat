@@ -12,11 +12,8 @@ set SCENE=%HERE%pingu_model.makina.json
 set POVRAY=D:\sandbox\Grasp3D\povray\bin\povray.exe
 set POVINC=D:\sandbox\Grasp3D\povray\include
 
-REM 320x180: three sor polyline loops per march step put a full-frame draw past the GPU
-REM watchdog (~17 s at 1280x720, measured); this stays at ~1 s. Raise it when the
-REM program gains per-node bound culling.
-set WIDTH=320
-set HEIGHT=180
+set WIDTH=1280
+set HEIGHT=720
 
 if not exist "%POVRAY%" (
     echo ERROR: POV-Ray not found at "%POVRAY%"
