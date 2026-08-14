@@ -49,7 +49,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -106,7 +108,9 @@ struct PovAppearance {
 /// One parse in progress: the token stream, the symbol tables, and the tree being built.
 class PovReader {
 public:
-    explicit PovReader(const std::string& src) : m_tok(povTokenize(src)) {}
+    /// @param baseDir where #include resolves from; empty means includes are only named.
+    explicit PovReader(const std::string& src, std::string baseDir = std::string())
+        : m_tok(povTokenize(src)), m_baseDir(std::move(baseDir)) {}
 
     PovImportResult read() {
         PovNode root;
@@ -216,13 +220,30 @@ private:
             if (m_vectors.count(name) > 0) {
                 refuse("'" + name + "' is a vector and a number is needed here");
             }
+            if (name == "rand" && isPunct('(', 1)) {
+                // POV's own generator, characterised by measurement (black box, never its
+                // source): seed(N) sets a 32-bit state to N, each draw steps
+                // state = 1812433253 * state + 12345 mod 2^32 and returns state / (2^32 - 1).
+                // Verified by predicting five draws for a fresh seed and matching POV's #debug
+                // output to all 17 printed digits. If POV ever changes generators, the
+                // scene.pov silhouette comparison is what catches it.
+                take();
+                take();
+                if (peek().kind != PovTokenKind::Word ||
+                    m_streams.count(peek().text) == 0) {
+                    refuse("rand() wants a stream made by seed(); '" + peek().text +
+                           "' is not one");
+                }
+                std::uint32_t& state = m_streams[take().text];
+                expectPunct(')');
+                state = static_cast<std::uint32_t>(1812433253u * state + 12345u);
+                return static_cast<double>(state) / 4294967295.0;
+            }
             if (isPunct('(', 1)) {
-                // POV has a function library, and some of it -- rand and seed above all -- can
-                // only be matched by running POV's own generator. Naming it as a call rather than
-                // as an unknown value is the difference between "this file uses something out of
-                // scope" and "this reader is broken".
-                refuse("'" + name + "' is a function call, and this reader evaluates none: POV's "
-                       "functions would each have to produce the same values POV does");
+                // The rest of POV's function library. Each would have to produce the same
+                // values POV does; rand/seed above are the ones a measured characterisation
+                // exists for.
+                refuse("'" + name + "' is a function call this reader does not evaluate");
             }
             refuse("'" + name + "' is not a value this reader knows");
         }
@@ -400,9 +421,15 @@ private:
             if (t.text == "#include") {
                 take();
                 if (peek().kind == PovTokenKind::String) {
-                    // Named rather than followed. Reading it would need a search path, and one bad
-                    // path would look like a scene that simply has fewer objects in it.
-                    note("#include \"" + take().text + "\"");
+                    const std::string file = take().text;
+                    if (m_baseDir.empty()) {
+                        // A string import has no directory to resolve from, so the include is
+                        // named rather than silently skipped -- a scene that simply has fewer
+                        // objects in it is the failure this line prevents.
+                        note("#include \"" + file + "\"");
+                        return;
+                    }
+                    spliceInclude(file);
                     return;
                 }
                 refuse("#include needs a file name in quotes");
@@ -524,6 +551,17 @@ private:
             if (isPunct(';')) { take(); }
             return;
         }
+        if (isWord("seed") && isPunct('(', 1)) {
+            // A random stream, not a number: the name holds mutable generator state, and every
+            // rand(name) after this advances it in file order -- the same order POV reads in.
+            take();
+            take();
+            const double n = number();
+            expectPunct(')');
+            m_streams[name] = static_cast<std::uint32_t>(n);
+            if (isPunct(';')) { take(); }
+            return;
+        }
         m_numbers[name] = number();
         if (isPunct(';')) { take(); }
     }
@@ -578,6 +616,33 @@ private:
             mac.body.push_back(take());
         }
         m_macros[name] = std::move(mac);
+    }
+
+    /// Reads an included file and splices its tokens at the cursor, the way a macro call
+    /// splices its body: the stream continues seamlessly and every construct lands in the same
+    /// tables. Only files inside the scene's own directory tree resolve -- POV's bundled
+    /// include library (colors.inc and friends) is AGPL and stays out of this project's reach,
+    /// so a scene needing it refuses by name instead of quietly losing its palette.
+    void spliceInclude(const std::string& file) {
+        const std::string path = m_baseDir + "/" + file;
+        for (const std::string& already : m_includedFiles) {
+            if (already == file) {
+                refuse("'" + file + "' includes itself, through however many files");
+            }
+        }
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            refuse("#include could not open '" + file + "' beside the scene");
+        }
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        m_includedFiles.push_back(file);
+        std::vector<PovToken> tokens = povTokenize(ss.str());
+        if (!tokens.empty() && tokens.back().kind == PovTokenKind::End) {
+            tokens.pop_back();
+        }
+        m_tok.insert(m_tok.begin() + static_cast<std::ptrdiff_t>(m_at), tokens.begin(),
+                     tokens.end());
     }
 
     /// Expands `Name(args)` in place when Name is a defined macro. Returns whether it did.
@@ -1948,6 +2013,13 @@ private:
     std::map<std::string, PovNode> m_objects;
     std::map<std::string, std::vector<PovMove>> m_transforms;
     std::map<std::string, PovMacro> m_macros;
+    std::string m_baseDir;
+    /// Every file spliced so far. One splice per name: a repeat is a cycle more often than a
+    /// design, and refusing it names the loop instead of running the token count to the cap.
+    std::vector<std::string> m_includedFiles;
+    /// Random streams by name: seed(N) creates one, rand(name) steps it. See factor() for the
+    /// measured generator.
+    std::map<std::string, std::uint32_t> m_streams;
     /// Total macro expansions so far; the bound that turns recursion into a refusal.
     int m_expansions = 0;
     /// The components past the third of the last `<...>` literal read.
@@ -1963,8 +2035,11 @@ private:
 }  // namespace detail
 
 /// Reads a POV-Ray file into a scene, or throws PovParseError saying why it cannot.
-inline PovImportResult importPov(const std::string& source) {
-    detail::PovReader reader(source);
+/// @param baseDir the directory #include resolves from. Empty (the default) keeps the old
+/// behaviour: includes are reported by name instead of followed.
+inline PovImportResult importPov(const std::string& source,
+                                 const std::string& baseDir = std::string()) {
+    detail::PovReader reader(source, baseDir);
     return reader.read();
 }
 

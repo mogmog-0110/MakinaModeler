@@ -121,10 +121,9 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"polygon", PovStatus::UnsupportedShape, "a flat outline with any number of sides"},
         {"text", PovStatus::UnsupportedShape, "glyphs from a font"},
         {"bicubic_patch", PovStatus::UnsupportedShape, "a bicubic patch"},
+        {"rand", PovStatus::Supported, "POV's generator, characterised by measurement"},
+        {"seed", PovStatus::Supported, ""},
         // Language the reader does not evaluate.
-        {"rand", PovStatus::UnsupportedLanguage,
-         "POV's own generator; only its measured stream would match"},
-        {"seed", PovStatus::UnsupportedLanguage, ""},
         {"#while", PovStatus::UnsupportedLanguage, ""},
         {"#for", PovStatus::UnsupportedLanguage, ""},
         {"#if", PovStatus::UnsupportedLanguage, ""},

@@ -384,7 +384,7 @@ void boundaries() {
     // which says where the parser was rather than what the file asked for.
     refuses("#declare S = sor { 3, <0,0>,<1,1>,<0,2> }", "at least four points");
     refuses("isosurface { function { x*x } }", "given by a function");
-    refuses("sphere{<0,0,0>,rand(R)}", "is a function call");
+    refuses("sphere{<0,0,0>,rand(R)}", "not one");
     refuses("box{<0,0,0>,<1,1,1> scale <0,1,1>}", "collapses");
     refuses("object{Nope}", "not a declared object");
     refuses("union{sphere{<0,0,0>,1}", "not closed");
@@ -816,6 +816,62 @@ void finishDiffuse() {
           "finish diffuse 0");
 }
 
+/// #include: followed when the import knows a directory, named when it does not.
+void includeFollows() {
+    std::printf("#include splices the named file\n");
+    {
+        std::ofstream inc("povcheck_shapes.inc", std::ios::binary);
+        inc << "#declare Ball = sphere{<0,0,0>,1}\n";
+    }
+    try {
+        const makina::PovImportResult r =
+            makina::importPov("#include \"povcheck_shapes.inc\"\nobject{Ball}", ".");
+        check(r.unsupported.empty(), "the include should be followed, not noted");
+        check(r.scene.nodes.count == 2, "the included Ball should be in the tree");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the include was refused: ") + e.what());
+    }
+    std::remove("povcheck_shapes.inc");
+
+    // A missing file refuses by name; a string import (no directory) keeps the old note.
+    try {
+        makina::importPov("#include \"no_such_file.inc\"", ".");
+        check(false, "a missing include should refuse");
+    } catch (const makina::PovParseError& e) {
+        check(std::string(e.what()).find("could not open") != std::string::npos,
+              "the refusal should say the file could not be opened");
+    }
+    notes("#include \"whatever.inc\"\nsphere{<0,0,0>,1}", "#include");
+}
+
+/// rand/seed against POV's own measured stream.
+///
+/// The expected numbers are POV's #debug output for seed(42), read at 17 digits -- not values
+/// this implementation produced. If the generator characterisation drifts from POV, this fails
+/// against POV, not against itself.
+void randStream() {
+    std::printf("rand follows POV's measured stream\n");
+    try {
+        // Three draws land in a box's corner; the box then IS the stream, comparable exactly.
+        const makina::PovImportResult r = makina::importPov(
+            "#declare S = seed(42);\n"
+            "box{<0,0,0>, <rand(S), rand(S), rand(S)>}");
+        check(r.scene.nodes.count == 2, "the box should read");
+        const makina::CsgNode& b = r.scene.nodes[1];
+        const double expected[3] = {0.72358291124077112, 0.32997925959759838,
+                                    0.75576167035749220};
+        for (int i = 0; i < 3; ++i) {
+            check(std::fabs(b.params[3 + i] - expected[i]) < 1e-7,
+                  "draw " + std::to_string(i) + " should match POV's own stream for seed(42)");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the rand box was refused: ") + e.what());
+    }
+
+    refuses("#declare N = 3; box{<0,0,0>, <rand(N), 1, 1>}", "not one");
+    refuses("box{<0,0,0>, <rand(S), 1, 1>}", "not one");
+}
+
 /// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
 ///
 /// The two spellings reach the material through different code paths (a flat pigment reads its
@@ -862,6 +918,8 @@ int main(int argc, char** argv) {
         sorImport();
         sweepImport();
         finishDiffuse();
+        randStream();
+        includeFollows();
         srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

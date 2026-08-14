@@ -82,7 +82,10 @@ int main(int argc, char** argv) {
             return r.clean ? 0 : 1;
         }
 
-        const makina::PovImportResult r = makina::importPov(readFile(source));
+        // The scene's own directory, so its #include lines resolve the way POV resolves them.
+        const std::size_t slash = source.find_last_of("/\\");
+        const std::string baseDir = slash == std::string::npos ? "." : source.substr(0, slash);
+        const makina::PovImportResult r = makina::importPov(readFile(source), baseDir);
 
         std::printf("%s\n", source.c_str());
         if (r.unsupported.empty()) {
