@@ -27,6 +27,7 @@
 #include "Scene.hpp"
 #include "Sdf.hpp"
 #include "SorProfile.hpp"
+#include "SweepProfile.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -320,6 +321,28 @@ inline double evalSor(const Scene& s, std::uint16_t index, const double p[3], do
     return sorSideDistance(&side[0][0], num, rho, p[1]) * scale;
 }
 
+/// The swept solid's distance: the least distance to any round-cone link of the sampled path.
+/// Each link is exact (Sdf.hpp), so the only approximation is the sampling of the curve, which
+/// the sweep-silhouette comparison against POV watches.
+inline double evalSweep(const Scene& s, std::uint16_t index, const double p[3], double scale) {
+    double samples[kMaxSweepSamples][4];
+    const int num = sweepSamples(s, index, samples);
+    if (num < 2) {
+        return kEmpty;
+    }
+    double d = kEmpty;
+    for (int i = 0; i + 1 < num; ++i) {
+        const double* a = samples[i];
+        const double* b = samples[i + 1];
+        const double e = mkSdRoundCone(p[0], p[1], p[2], a[0], a[1], a[2], b[0], b[1], b[2],
+                                       a[3], b[3]);
+        if (e < d) {
+            d = e;
+        }
+    }
+    return d * scale;
+}
+
 inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], double scale,
                        Fidelity f) {
     const CsgNode& n = s.nodes[index];
@@ -335,8 +358,11 @@ inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], d
     if (op == Op::Sor) {
         return evalSor(s, index, p, scale);
     }
-    // A control point contributes through its Sor's profile and nowhere else.
-    if (op == Op::SorPoint) {
+    if (op == Op::SphereSweep) {
+        return evalSweep(s, index, p, scale);
+    }
+    // A control point contributes through its Sor's or its sweep's walk and nowhere else.
+    if (op == Op::SorPoint || op == Op::SweepPoint) {
         return kEmpty;
     }
     // A component contributes through its Blob's field walk and nowhere else: evaluated on its

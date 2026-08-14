@@ -256,7 +256,7 @@ inline std::string povTransform(const CsgNode& n) {
 inline int countPovObjects(const Scene& s, std::uint16_t index) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
-    if (isBoolean(op) || op == Op::Blob || op == Op::Sor) {
+    if (isBoolean(op) || op == Op::Blob || op == Op::Sor || op == Op::SphereSweep) {
         return 1;
     }
     int count = isPrimitive(op) ? 1 : 0;
@@ -271,7 +271,7 @@ inline int countPovObjects(const Scene& s, std::uint16_t index) {
 inline std::string bodyMaterial(const Scene& s, std::uint16_t index, bool silhouette) {
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
-    if (isPrimitive(op) || op == Op::Blob || op == Op::Sor) {
+    if (isPrimitive(op) || op == Op::Blob || op == Op::Sor || op == Op::SphereSweep) {
         return povMaterial(s, n, silhouette);
     }
     for (std::uint16_t i = 0; i < n.childCount; ++i) {
@@ -391,6 +391,32 @@ inline std::string povSor(const Scene& s, std::uint16_t index, const std::string
     return out;
 }
 
+/// One `sphere_sweep { ... }` block: the spline kind, the count, the points with their radii,
+/// then dress and placement.
+inline std::string povSweep(const Scene& s, std::uint16_t index, const std::string& transform,
+                            bool silhouette) {
+    const CsgNode& n = s.nodes[index];
+    std::string pts;
+    int total = 0;
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        const CsgNode& c = s.nodes[static_cast<std::uint16_t>(n.firstChild + i)];
+        if (static_cast<Op>(c.op) != Op::SweepPoint) {
+            continue;
+        }
+        pts += std::string(total > 0 ? ",\n" : "") + "\t" +
+               vec3(c.params[0], c.params[1], c.params[2]) + "," + num(c.params[3]);
+        ++total;
+    }
+    const bool bspline = (n.flags & flags::kSweepBspline) != 0;
+    std::string out = std::string("sphere_sweep{\n\t") +
+                      (bspline ? "b_spline" : "linear_spline") + " " + std::to_string(total) +
+                      ",\n" + pts + "\n";
+    out += povMaterial(s, n, silhouette);
+    out += transform;
+    out += "}\n\n";
+    return out;
+}
+
 /// One subtree.
 ///
 /// `transform` is the block accumulated from the ancestors, `inCsg` says whether a face has to be
@@ -408,6 +434,9 @@ inline std::string povSubtree(const Scene& s, std::uint16_t index, const std::st
     }
     if (op == Op::Sor) {
         return povSor(s, index, transform, silhouette);
+    }
+    if (op == Op::SphereSweep) {
+        return povSweep(s, index, transform, silhouette);
     }
 
     // A transform prepends to the block, so the outermost transform is applied last -- POV reads

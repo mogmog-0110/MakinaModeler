@@ -69,6 +69,9 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n,
             // applies like any primitive's.
             o << "sorDist" << i << "(length(" << p << ".xz), " << p << ".y)";
             break;
+        case makina::EvalOp::SphereSweep:
+            o << "sweepDist" << i << "(" << p << ")";
+            break;
         // Densities, not distances; their params[3] is 1, so the correction multiply below is
         // the identity and the shared tail stays shared.
         case makina::EvalOp::BlobSphere:
@@ -141,6 +144,39 @@ inline std::string generateSorHelpers(const makina::EvalProgram& prog) {
           << "        j = k;\n"
           << "    }\n"
           << "    return sgn * sqrt(d);\n}\n\n";
+    }
+    return o.str();
+}
+
+/// One helper per SphereSweep node: its samples as inlined constants and the least distance to
+/// any round-cone link, the same chain Eval.hpp walks on the CPU.
+inline std::string generateSweepHelpers(const makina::EvalProgram& prog) {
+    std::ostringstream o;
+    for (std::size_t i = 0; i < prog.nodes.size(); ++i) {
+        const makina::EvalNode& n = prog.nodes[i];
+        if (static_cast<makina::EvalOp>(n.op) != makina::EvalOp::SphereSweep) {
+            continue;
+        }
+        const int offset = static_cast<int>(n.params[0]);
+        const int num = static_cast<int>(n.params[1]);
+
+        o << "static const float4 kSweep" << i << "[" << num << "] = {\n";
+        for (int k = 0; k < num; ++k) {
+            const float* q = prog.sweepProfiles.data() + offset + 4 * k;
+            o << "    float4(" << detail::flt(q[0]) << ", " << detail::flt(q[1]) << ", "
+              << detail::flt(q[2]) << ", " << detail::flt(q[3]) << ")"
+              << (k + 1 < num ? ",\n" : "\n");
+        }
+        o << "};\n";
+        o << "float sweepDist" << i << "(float3 p) {\n"
+          << "    float d = 1.0e30;\n"
+          << "    [loop] for (int k = 0; k + 1 < " << num << "; ++k) {\n"
+          << "        float4 a = kSweep" << i << "[k];\n"
+          << "        float4 b = kSweep" << i << "[k + 1];\n"
+          << "        d = min(d, mkSdRoundCone(p.x, p.y, p.z, a.x, a.y, a.z, b.x, b.y, b.z, "
+             "a.w, b.w));\n"
+          << "    }\n"
+          << "    return d;\n}\n\n";
     }
     return o.str();
 }
@@ -316,8 +352,8 @@ inline std::string generateShader(const makina::EvalProgram& prog,
         // every scene and nothing needs compiling when the model changes.
         o << "#include \"scene_interpret.hlsl\"\n\n";
     } else {
-        o << generateSorHelpers(prog) << generateEvalCsg(prog) << "\n"
-          << generateEvalCsgMaterial(prog) << "\n";
+        o << generateSorHelpers(prog) << generateSweepHelpers(prog) << generateEvalCsg(prog)
+          << "\n" << generateEvalCsgMaterial(prog) << "\n";
     }
     o << "#include \"" << shadingInclude << "\"\n";
     return o.str();

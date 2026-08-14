@@ -48,6 +48,9 @@ enum class EvalOp : std::uint32_t {
     /// A revolved profile. params[0] is the offset of its polyline in EvalProgram::sorProfiles
     /// (in floats), params[1] the vertex count of the right side; the mirror is implicit.
     Sor              = 8,
+    /// A swept sphere. params[0] is the offset of its samples in EvalProgram::sweepProfiles
+    /// (in floats, 4 per sample), params[1] the sample count.
+    SphereSweep      = 9,
 
     Union        = 16,
     Difference   = 17,
@@ -117,6 +120,9 @@ struct EvalProgram {
     /// table because a profile does not fit an 80-byte node, and the generated shader inlines it
     /// as constants so the GPU never reads it as a buffer.
     std::vector<float> sorProfiles;
+    /// Sweep samples, flat (x, y, z, radius) quads; an EvalOp::SphereSweep node points into
+    /// this, and the generated shader inlines it the same way it inlines a sor's polyline.
+    std::vector<float> sweepProfiles;
     int maxStackDepth = 0;
     FlattenReport report;
 };
@@ -207,6 +213,7 @@ struct FlattenContext {
     FlattenReport report;
     std::vector<GpuPigment> pigments;
     std::vector<float> sorProfiles;
+    std::vector<float> sweepProfiles;
 };
 
 /// Interns one (pattern, object space) pair, so two solids wearing the same texture in the same
@@ -646,6 +653,45 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         return Fragment{};
     }
 
+    if (op == Op::SphereSweep) {
+        double samples[kMaxSweepSamples][4];
+        const int num = sweepSamples(*ctx.scene, index, samples);
+        if (num < 2) {
+            return Fragment{};
+        }
+        EvalNode e{};
+        e.op = static_cast<std::uint32_t>(EvalOp::SphereSweep);
+        e.params[0] = static_cast<float>(ctx.sweepProfiles.size());
+        e.params[1] = static_cast<float>(num);
+        e.params[3] = static_cast<float>(scaleCorrection);
+        e.materialId = resolveMaterial(*ctx.scene, n);
+        e.pigmentId = kNoPigment;
+        if (e.materialId < ctx.scene->materials.count) {
+            const std::int32_t t = ctx.scene->materials[e.materialId].textureId;
+            if (t >= 0 && static_cast<std::uint32_t>(t) < ctx.scene->pigments.count) {
+                e.pigmentId = internPigment(ctx, ctx.scene->pigments[t],
+                                            carriesTexture ? world : textureWorld);
+            }
+        }
+        Mat4 inv{};
+        if (!invertAffine(world, inv)) {
+            ++ctx.report.skippedUnsupported;
+            return Fragment{};
+        }
+        for (int r = 0; r < 12; ++r) {
+            e.inv[r] = static_cast<float>(inv.m[r]);
+        }
+        for (int i = 0; i < num; ++i) {
+            for (int k = 0; k < 4; ++k) {
+                ctx.sweepProfiles.push_back(static_cast<float>(samples[i][k]));
+            }
+        }
+        return Fragment{e};
+    }
+    if (op == Op::SweepPoint) {
+        return Fragment{};
+    }
+
     // Merge, SceneRoot, Unsupported, and every primitive. A primitive with children contributes
     // both its own surface and theirs, which is what the reference evaluator does.
     std::vector<Fragment> parts;
@@ -697,6 +743,22 @@ inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double 
             const int num = static_cast<int>(n.params[1]);
             d = detail::sorSideDistance(prog.sorProfiles.data() + offset, num,
                                         std::sqrt(x * x + z * z), y);
+            break;
+        }
+        case EvalOp::SphereSweep: {
+            const int offset = static_cast<int>(n.params[0]);
+            const int num = static_cast<int>(n.params[1]);
+            const float* q = prog.sweepProfiles.data() + offset;
+            d = MK_EMPTY;
+            for (int i = 0; i + 1 < num; ++i) {
+                const float* a = q + 4 * i;
+                const float* b = a + 4;
+                const double e = mkSdRoundCone(x, y, z, a[0], a[1], a[2], b[0], b[1], b[2],
+                                               a[3], b[3]);
+                if (e < d) {
+                    d = e;
+                }
+            }
             break;
         }
         case EvalOp::Sphere:
@@ -860,12 +922,13 @@ inline EvalProgram flatten(const Scene& s) {
         return out;
     }
 
-    detail::FlattenContext ctx{&s, {}, {}, {}};
+    detail::FlattenContext ctx{&s, {}, {}, {}, {}};
     out.nodes = detail::flattenNode(ctx, 0, detail::identityMat(), detail::identityMat(), 1.0,
                                     detail::kTopLevel);
     out.report = ctx.report;
     out.pigments = std::move(ctx.pigments);
     out.sorProfiles = std::move(ctx.sorProfiles);
+    out.sweepProfiles = std::move(ctx.sweepProfiles);
 
     // Stack depth of the emitted sequence, which is what sizes the shader's array.
     int depth = 0;

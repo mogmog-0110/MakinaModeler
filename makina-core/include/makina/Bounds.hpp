@@ -22,6 +22,7 @@
 #include "Fidelity.hpp"
 #include "Scene.hpp"
 #include "SorProfile.hpp"
+#include "SweepProfile.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -342,6 +343,39 @@ inline Aabb subtreeBounds(const Scene& s, std::uint16_t index, const Mat4& m, in
         for (const double* c : corners) {
             double w[3];
             applyMat(m, c, w);
+            expand(box, w);
+        }
+        ++primitiveCount;
+        return box;
+    }
+
+    if (op == Op::SphereSweep) {
+        // A B-spline stays inside its control hull (and linear trivially does), radii included,
+        // so the hull box grown by the largest radius contains the whole envelope.
+        double pts[kMaxSweepPoints][4];
+        const int count = sweepControls(s, index, pts);
+        if (count == 0) {
+            return emptyAabb();
+        }
+        double lo[3] = {pts[0][0], pts[0][1], pts[0][2]};
+        double hi[3] = {lo[0], lo[1], lo[2]};
+        double maxR = 0.0;
+        for (int i = 0; i < count; ++i) {
+            for (int k = 0; k < 3; ++k) {
+                if (pts[i][k] < lo[k]) lo[k] = pts[i][k];
+                if (pts[i][k] > hi[k]) hi[k] = pts[i][k];
+            }
+            if (pts[i][3] > maxR) {
+                maxR = pts[i][3];
+            }
+        }
+        Aabb box = emptyAabb();
+        for (int c = 0; c < 8; ++c) {
+            const double corner[3] = {(c & 1 ? hi[0] : lo[0]) + (c & 1 ? maxR : -maxR),
+                                      (c & 2 ? hi[1] : lo[1]) + (c & 2 ? maxR : -maxR),
+                                      (c & 4 ? hi[2] : lo[2]) + (c & 4 ? maxR : -maxR)};
+            double w[3];
+            applyMat(m, corner, w);
             expand(box, w);
         }
         ++primitiveCount;

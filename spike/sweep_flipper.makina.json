@@ -1,0 +1,122 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "units": "meter",
+  "coordinates": "right-handed-y-up",
+  "angles": "degrees",
+  "nextId": 12,
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "Scene",
+    "children": [
+      {
+        "id": 2,
+        "op": "Rotate",
+        "name": "Rotate",
+        "axis": "Y",
+        "degree": 30.0,
+        "children": [
+          {
+            "id": 3,
+            "op": "Rotate",
+            "name": "Rotate",
+            "axis": "X",
+            "degree": 10.0,
+            "children": [
+              {
+                "id": 4,
+                "op": "Scale",
+                "name": "Scale",
+                "x": 1.0,
+                "y": 1.0,
+                "z": 0.7799999713897705,
+                "children": [
+                  {
+                    "id": 5,
+                    "op": "SphereSweep",
+                    "name": "SphereSweep",
+                    "material": 0,
+                    "spline": "bspline",
+                    "children": [
+                      {
+                        "id": 6,
+                        "op": "SweepPoint",
+                        "name": "SweepPoint",
+                        "x": -0.03999999910593033,
+                        "y": 1.0199999809265137,
+                        "z": 0.019999999552965164,
+                        "radius": 0.15199999511241913
+                      },
+                      {
+                        "id": 7,
+                        "op": "SweepPoint",
+                        "name": "SweepPoint",
+                        "x": -0.30000001192092896,
+                        "y": 1.2599999904632568,
+                        "z": 0.0,
+                        "radius": 0.14800000190734863
+                      },
+                      {
+                        "id": 8,
+                        "op": "SweepPoint",
+                        "name": "SweepPoint",
+                        "x": -0.5600000023841858,
+                        "y": 1.659999966621399,
+                        "z": -0.029999999329447746,
+                        "radius": 0.12999999523162842
+                      },
+                      {
+                        "id": 9,
+                        "op": "SweepPoint",
+                        "name": "SweepPoint",
+                        "x": -0.6299999952316284,
+                        "y": 2.0399999618530273,
+                        "z": -0.05000000074505806,
+                        "radius": 0.10000000149011612
+                      },
+                      {
+                        "id": 10,
+                        "op": "SweepPoint",
+                        "name": "SweepPoint",
+                        "x": -0.5400000214576721,
+                        "y": 2.259999990463257,
+                        "z": -0.05000000074505806,
+                        "radius": 0.06800000369548798
+                      },
+                      {
+                        "id": 11,
+                        "op": "SweepPoint",
+                        "name": "SweepPoint",
+                        "x": -0.4300000071525574,
+                        "y": 2.3299999237060547,
+                        "z": -0.03999999910593033,
+                        "radius": 0.02800000086426735
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "materials": [
+    {
+      "id": 0,
+      "diffuse": [
+        64,
+        64,
+        77
+      ],
+      "alpha": 1.0,
+      "ambient": 0.10000000149011612,
+      "specular": 0.0,
+      "shininess": 0.0,
+      "emission": 0.0,
+      "texture": null
+    }
+  ]
+}

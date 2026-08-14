@@ -678,6 +678,94 @@ void sorImport() {
     refuses("sor { 4, <0.5,-0.5>, <0.5,0>, <0.5,1>, <0.5,1.5> open }", "no interior");
 }
 
+/// sphere_sweep: reading, the solid it evaluates to, and the write/read round trip.
+///
+/// Oracles: a two-point linear sweep with equal radii is a capsule, checked against an
+/// independent capsule formula written here; and a b_spline through collinear, evenly spaced
+/// points is a straight run whose ends the basis pins at the one-sixth blend of the outer
+/// points -- four points at y = 0,1,2,3 must give exactly the capsule from y=1 to y=2. A wrong
+/// basis moves those ends and this sees it.
+void sweepImport() {
+    std::printf("sphere_sweep reads, evaluates, and round-trips\n");
+    const auto at = [](const makina::Scene& s, double x, double y, double z) {
+        const double p[3] = {x, y, z};
+        return makina::eval(s, p);
+    };
+    const auto capsule = [](double px, double py, double pz, double y0, double y1, double r) {
+        const double t = py < y0 ? y0 : (py > y1 ? y1 : py);
+        return std::sqrt(px * px + (py - t) * (py - t) + pz * pz) - r;
+    };
+
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere_sweep { linear_spline 2, <0,0,0>, 0.3, <0,1,0>, 0.3 }");
+        check(r.unsupported.empty(), "the linear sweep should read whole");
+        const double probes[4][3] = {{0.5, 0.5, 0}, {0, -0.4, 0}, {0.1, 0.5, 0.1}, {0, 1.6, 0}};
+        for (const double* p : probes) {
+            // 1e-6, not tighter: the scene stores the points and radii as float32, and the
+            // oracle here computes in double.
+            check(std::fabs(at(r.scene, p[0], p[1], p[2]) -
+                            capsule(p[0], p[1], p[2], 0.0, 1.0, 0.3)) < 1e-6,
+                  "the two-point linear sweep should evaluate as its capsule");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the linear sweep was refused: ") + e.what());
+    }
+
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere_sweep { b_spline 4, <0,0,0>, 0.3, <0,1,0>, 0.3, <0,2,0>, 0.3, "
+            "<0,3,0>, 0.3 }");
+        const double probes[3][3] = {{0.5, 1.5, 0}, {0, 0.9, 0}, {0.2, 2.4, 0.1}};
+        for (const double* p : probes) {
+            check(std::fabs(at(r.scene, p[0], p[1], p[2]) -
+                            capsule(p[0], p[1], p[2], 1.0, 2.0, 0.3)) < 1e-6,
+                  "the collinear b_spline should run exactly from y=1 to y=2");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the b_spline sweep was refused: ") + e.what());
+    }
+
+    // pingu.pov's FlipperUp, verbatim, plus the round trip.
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere_sweep {\n"
+            "  b_spline 6\n"
+            "  <-0.04, 1.02,  0.02>, 0.152\n"
+            "  <-0.30, 1.26,  0.00>, 0.148\n"
+            "  <-0.56, 1.66, -0.03>, 0.130\n"
+            "  <-0.63, 2.04, -0.05>, 0.100\n"
+            "  <-0.54, 2.26, -0.05>, 0.068\n"
+            "  <-0.43, 2.33, -0.04>, 0.028\n"
+            "  tolerance 0.00004\n"
+            "  scale <1, 1, 0.78>\n"
+            "}");
+        check(r.unsupported.empty(), "the flipper sweep should read whole");
+        makina::PovOptions opt;
+        const makina::PovImportResult back = makina::importPov(makina::writePov(r.scene, opt));
+        const double pts[3][3] = {{-0.4, 1.6, 0}, {-0.56, 1.66, 0}, {0.2, 2.0, 0.3}};
+        for (const double* p : pts) {
+            check(std::fabs(at(r.scene, p[0], p[1], p[2]) - at(back.scene, p[0], p[1], p[2])) <
+                      1e-6,
+                  "the round-tripped sweep evaluates differently");
+        }
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the flipper sweep was refused: ") + e.what());
+    }
+
+    // The comma after a skipped value: an area_light's argument list once hung the reader,
+    // because skipValue could decline to move. The note must arrive, not a timeout.
+    notes("light_source { <0,0,0> color rgb <1,1,1> area_light <2,0,0>, <0,2,0>, 9, 9 "
+          "adaptive 1 jitter circular orient } sphere{<0,0,0>,1}",
+          "area_light");
+
+    refuses("sphere_sweep { cubic_spline 4, <0,0,0>, 1, <0,1,0>, 1, <0,2,0>, 1, <0,3,0>, 1 }",
+            "not held yet");
+    refuses("sphere_sweep { b_spline 3, <0,0,0>, 1, <0,1,0>, 1, <0,2,0>, 1 }",
+            "at least four");
+    refuses("sphere_sweep { linear_spline 2, <0,0,0>, 0, <0,1,0>, 1 }", "positive radius");
+}
+
 /// `srgb` colors must come out decoded to linear, `rgb` must come out untouched.
 ///
 /// The two spellings reach the material through different code paths (a flat pigment reads its
@@ -722,6 +810,7 @@ int main(int argc, char** argv) {
         macroExpansion();
         blobImport();
         sorImport();
+        sweepImport();
         srgbDecode();
     } catch (const std::exception& e) {
         std::printf("    FAIL  %s\n", e.what());

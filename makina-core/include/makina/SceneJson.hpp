@@ -90,6 +90,10 @@ inline void fillNode(Scene& s, std::uint16_t index, const nlohmann::json& j) {
         if (entry->op == Op::Cone && j.value("open", false)) {
             n.flags |= flags::kConeOpen;
         }
+        if (entry->op == Op::SphereSweep &&
+            j.value("spline", std::string("linear")) == "bspline") {
+            n.flags |= flags::kSweepBspline;
+        }
     }
     if (j.value("muted", false)) {
         // Read for every op, not just the ones with their own flags: any node can be taken out of
@@ -296,6 +300,9 @@ inline nlohmann::ordered_json writeNode(const Scene& s, std::uint16_t index) {
         }
         if (op == Op::Cone) {
             j["open"] = (n.flags & flags::kConeOpen) != 0;
+        }
+        if (op == Op::SphereSweep) {
+            j["spline"] = (n.flags & flags::kSweepBspline) != 0 ? "bspline" : "linear";
         }
     }
     if ((n.flags & flags::kMuted) != 0) {

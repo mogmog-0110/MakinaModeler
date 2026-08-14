@@ -91,6 +91,8 @@ inline const std::vector<PovWordClass>& povWordTable() {
         {"interior", PovStatus::Supported, "ior"},
         {"blob", PovStatus::Supported, "sphere and cylinder components"},
         {"sor", PovStatus::Supported, "closed only; open is refused"},
+        {"sphere_sweep", PovStatus::Supported, "linear_spline and b_spline; cubic is refused"},
+        {"tolerance", PovStatus::Ignored, "tunes POV's root finding, not the surface"},
         {"sturm", PovStatus::Ignored, "tunes POV's root solver, not the surface"},
         {"camera", PovStatus::Supported, "perspective / orthographic / fisheye / ultra_wide_angle / panoramic"},
         {"light_source", PovStatus::Supported, "point lights; softness is out of scope by policy"},
@@ -109,7 +111,6 @@ inline const std::vector<PovWordClass>& povWordTable() {
         // cross-check keeps the two lists honest.
         {"lathe", PovStatus::UnsupportedShape, "a spline revolved about an axis"},
         {"prism", PovStatus::UnsupportedShape, "a spline swept along an axis"},
-        {"sphere_sweep", PovStatus::UnsupportedShape, "a sphere dragged along a spline"},
         {"superellipsoid", PovStatus::UnsupportedShape, "an implicit surface with two exponents"},
         {"isosurface", PovStatus::UnsupportedShape, "an implicit surface given by a function"},
         {"parametric", PovStatus::UnsupportedShape, "a surface given by two parameters"},

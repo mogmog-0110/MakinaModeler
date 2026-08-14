@@ -42,8 +42,10 @@
 #include "Op.hpp"
 #include "PovLex.hpp"
 #include "Scene.hpp"
-// For kMaxSorPoints: the reader refuses what the evaluator could not hold, in the same breath.
+// For kMaxSorPoints / kMaxSweepPoints: the reader refuses what the evaluator could not hold,
+// in the same breath.
 #include "SorProfile.hpp"
+#include "SweepProfile.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -350,6 +352,12 @@ private:
         if (isPunct('{')) { skipBlock(); return; }
         if (isPunct('<')) { double v[3]; vector3(v); return; }
         if (peek().kind == PovTokenKind::Number) { (void)number(); return; }
+        // Anything else -- a separating comma above all -- is consumed as one token. Every
+        // caller loops "skip until '}'", and a skip that can decline to move turns the first
+        // `area_light <..>, <..>, 9, 9` into a loop that never ends.
+        if (peek().kind != PovTokenKind::End && !isPunct('}')) {
+            take();
+        }
     }
 
     // ---------------------------------------------------------------- top level
@@ -430,7 +438,6 @@ private:
         static const Entry kShapes[] = {
             {"lathe",          "a spline revolved about an axis"},
             {"prism",          "a spline swept along an axis"},
-            {"sphere_sweep",   "a sphere dragged along a spline"},
             {"superellipsoid", "an implicit surface with two exponents"},
             {"isosurface",     "an implicit surface given by a function"},
             {"parametric",     "a surface given by two parameters"},
@@ -465,7 +472,8 @@ private:
         static const char* kStarts[] = {"sphere",     "box",          "cylinder", "cone",
                                         "torus",      "plane",        "disc",     "triangle",
                                         "union",      "merge",        "difference",
-                                        "intersection", "object",     "blob",     "sor"};
+                                        "intersection", "object",     "blob",     "sor",
+                                        "sphere_sweep"};
         for (const char* s : kStarts) {
             if (isWord(s)) {
                 return true;
@@ -1085,6 +1093,7 @@ private:
         if (isWord("object")) { return instance(); }
         if (isWord("blob"))   { return readBlob(); }
         if (isWord("sor"))    { return readSor(); }
+        if (isWord("sphere_sweep")) { return readSphereSweep(); }
         refuse("'" + peek().text + "' does not begin an object");
     }
 
@@ -1484,6 +1493,66 @@ private:
             }
             // sturm tunes POV's root solver, not the surface: the one word read without a note.
             take();
+        }
+        return modifiers(std::move(n));
+    }
+
+    /// `sphere_sweep { KIND N, <c>, r, ... [tolerance] mods }`: the envelope of a sphere
+    /// moving along a spline, its radius interpolated with the same spline as its centre.
+    ///
+    /// cubic_spline is refused by name until it is measured; guessing its basis would draw a
+    /// tube that follows a subtly different path with nothing to say so. `tolerance` tunes
+    /// POV's root finding, not the surface, so it reads silently like sor's sturm.
+    PovNode readSphereSweep() {
+        take();
+        expectPunct('{');
+        PovNode n = leaf(Op::SphereSweep, "SphereSweep");
+        bool bspline = false;
+        if (isWord("linear_spline")) {
+            take();
+        } else if (isWord("b_spline")) {
+            take();
+            bspline = true;
+            n.flags |= flags::kSweepBspline;
+        } else if (isWord("cubic_spline")) {
+            refuse("a cubic_spline sphere_sweep is not held yet; linear_spline and b_spline "
+                   "are");
+        } else {
+            refuse("a sphere_sweep names its spline first: linear_spline or b_spline");
+        }
+        const int total = static_cast<int>(number());
+        if (total > detail::kMaxSweepPoints) {
+            refuse("a sphere_sweep with more than " +
+                   std::to_string(detail::kMaxSweepPoints) + " points is more path than this "
+                   "model holds");
+        }
+        if (total < (bspline ? 4 : 2)) {
+            refuse(std::string("a ") + (bspline ? "b_spline" : "linear_spline") +
+                   " sphere_sweep needs at least " + (bspline ? "four" : "two") + " points");
+        }
+        for (int i = 0; i < total; ++i) {
+            if (isPunct(',')) {
+                take();
+            }
+            double v[3];
+            vector3(v);
+            if (isPunct(',')) {
+                take();
+            }
+            const double r = number();
+            if (r <= 0.0) {
+                refuse("a sphere_sweep point needs a positive radius");
+            }
+            PovNode pt = leaf(Op::SweepPoint, "SweepPoint");
+            for (int k = 0; k < 3; ++k) {
+                pt.params[k] = static_cast<float>(v[k]);
+            }
+            pt.params[3] = static_cast<float>(r);
+            n.children.push_back(std::move(pt));
+        }
+        while (isWord("tolerance")) {
+            take();
+            number();
         }
         return modifiers(std::move(n));
     }

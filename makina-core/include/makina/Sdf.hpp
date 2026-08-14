@@ -140,6 +140,54 @@ MK_FN MK_FLOAT mkSdTorus(MK_FLOAT x, MK_FLOAT y, MK_FLOAT z, MK_FLOAT major, MK_
     return MK_SQRT(qx * qx + y * y) - minor;
 }
 
+// ---------------------------------------------------------------- swept spheres
+
+/// Exact distance to the envelope of a sphere swept linearly from a (radius r1) to b (radius
+/// r2): a capsule when the radii agree, a rounded cone otherwise. A sphere_sweep's polyline
+/// approximation is a chain of these, so the only error is the chain's, never the segment's.
+MK_FN MK_FLOAT mkSdRoundCone(MK_FLOAT px, MK_FLOAT py, MK_FLOAT pz,
+                             MK_FLOAT ax, MK_FLOAT ay, MK_FLOAT az,
+                             MK_FLOAT bx, MK_FLOAT by, MK_FLOAT bz,
+                             MK_FLOAT r1, MK_FLOAT r2) {
+    MK_FLOAT bax = bx - ax, bay = by - ay, baz = bz - az;
+    MK_FLOAT pax = px - ax, pay = py - ay, paz = pz - az;
+    MK_FLOAT l2 = bax * bax + bay * bay + baz * baz;
+    if (l2 <= 0.0) {
+        // Coincident end points: the envelope is the larger sphere.
+        MK_FLOAT r = MK_MAX(r1, r2);
+        return MK_SQRT(pax * pax + pay * pay + paz * paz) - r;
+    }
+    MK_FLOAT rr = r1 - r2;
+    MK_FLOAT a2 = l2 - rr * rr;
+    if (a2 <= 0.0) {
+        // One sphere swallows the sweep: the envelope is that sphere alone.
+        if (rr > 0.0) {
+            return MK_SQRT(pax * pax + pay * pay + paz * paz) - r1;
+        }
+        MK_FLOAT qx = px - bx, qy = py - by, qz = pz - bz;
+        return MK_SQRT(qx * qx + qy * qy + qz * qz) - r2;
+    }
+    MK_FLOAT il2 = 1.0 / l2;
+
+    MK_FLOAT y = pax * bax + pay * bay + paz * baz;
+    MK_FLOAT z = y - l2;
+    MK_FLOAT vx = pax * l2 - bax * y;
+    MK_FLOAT vy = pay * l2 - bay * y;
+    MK_FLOAT vz = paz * l2 - baz * y;
+    MK_FLOAT x2 = vx * vx + vy * vy + vz * vz;
+    MK_FLOAT y2 = y * y * l2;
+    MK_FLOAT z2 = z * z * l2;
+
+    MK_FLOAT k = (rr < 0.0 ? -1.0 : 1.0) * rr * rr * x2;
+    if ((z < 0.0 ? -1.0 : 1.0) * a2 * z2 > k) {
+        return MK_SQRT(x2 + z2) * il2 - r2;
+    }
+    if ((y < 0.0 ? -1.0 : 1.0) * a2 * y2 < k) {
+        return MK_SQRT(x2 + y2) * il2 - r1;
+    }
+    return (MK_SQRT(x2 * a2 * il2) + y * rr) * il2 - r1;
+}
+
 // ---------------------------------------------------------------- blob densities
 //
 // Not distances: a blob component contributes a density, and the surface is where the summed

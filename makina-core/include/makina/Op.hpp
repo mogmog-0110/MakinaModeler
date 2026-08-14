@@ -51,6 +51,12 @@ enum class Op : std::uint8_t {
     // inert, like a blob component outside a Blob.
     Sor      = 96,
     SorPoint = 97,
+
+    // Swept spheres (POV's sphere_sweep). Children are SweepPoints in file order, each a center
+    // and a radius; the solid is the envelope of the sphere moving along the spline named in
+    // flags. With kSweepBspline the control points steer without being touched.
+    SphereSweep = 98,
+    SweepPoint  = 99,
 };
 
 inline bool isPrimitive(Op op) {
@@ -81,6 +87,10 @@ constexpr std::uint16_t kAxisZ    = 2;
 
 // Cone "Open ": an open cone has no end caps.
 constexpr std::uint16_t kConeOpen = 0x0004;
+
+// SphereSweep: the control points are a cubic B-spline's, steering the curve without lying on
+// it. Clear means linear_spline. Reuses the Cone bit -- flags are read per op, never across.
+constexpr std::uint16_t kSweepBspline = 0x0004;
 
 // Muted: this node and everything under it take no part in the solid.
 //
@@ -140,6 +150,10 @@ inline const OpEntry* opTable(int& count) {
 
         {Op::Sor,          "Sor",          {nullptr}},
         {Op::SorPoint,     "SorPoint",     {"radius", "height", nullptr}},
+
+        // "spline" travels in flags, like Rotate's axis.
+        {Op::SphereSweep,  "SphereSweep",  {nullptr}},
+        {Op::SweepPoint,   "SweepPoint",   {"x", "y", "z", "radius", nullptr}},
     };
     count = static_cast<int>(sizeof(table) / sizeof(table[0]));
     return table;
