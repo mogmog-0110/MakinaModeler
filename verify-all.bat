@@ -51,6 +51,11 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    the domain warps against POV-Ray isosurfaces, silhouette for silhouette (D-14)
+    call "%HERE%spike\warp-silhouette-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    the same shape, and now the same colors on it
     echo.
     call "%HERE%spike\color-check.bat"

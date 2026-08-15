@@ -140,18 +140,6 @@ bool hasUnboundedPrimitive(const makina::Scene& s) {
     return false;
 }
 
-/// A domain warp (D-14) has no POV form yet: the exporter writes the unwarped children, and a
-/// comparison against that measures the warp itself rather than the renderer. Until the exporter
-/// writes an isosurface for the warped subtree, such a scene draws here and skips POV, and says
-/// so.
-bool hasWarp(const makina::Scene& s) {
-    for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
-        if (makina::isWarp(static_cast<makina::Op>(s.nodes[i].op))) {
-            return true;
-        }
-    }
-    return false;
-}
 
 /// Half the diagonal of a box, which is what every camera distance here is a multiple of.
 double radiusOf(const makina::Aabb& box) {
@@ -455,9 +443,6 @@ int main(int argc, char** argv) {
                     // silhouette of an unbounded solid is not a thing the two can agree on.
                     std::printf("    no .pov: the scene has unbounded geometry, whose silhouette "
                                 "depends on the far plane\n");
-                } else if (writePov && hasWarp(scene)) {
-                    std::printf("    no .pov: the scene holds a warp, which the exporter does not "
-                                "write yet (D-14)\n");
                 } else if (writePov) {
                     const FrameParams fp = frameScene(bounds.box, width, height, maxSteps);
                     makina::PovOptions po;

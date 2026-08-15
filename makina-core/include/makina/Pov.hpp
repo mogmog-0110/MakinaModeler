@@ -23,6 +23,7 @@
 #pragma once
 
 #include "Op.hpp"
+#include "PovIso.hpp"
 #include "PovShape.hpp"
 #include "Scene.hpp"
 
@@ -446,6 +447,26 @@ inline std::string povSubtree(const Scene& s, std::uint16_t index, const std::st
     }
     if (op == Op::SphereSweep) {
         return povSweep(s, index, transform, silhouette);
+    }
+    if (isWarp(op)) {
+        // The whole warped subtree as one isosurface (PovIso.hpp). Its material is the warp
+        // node's own or, failing that, the first material found beneath -- POV dresses the
+        // isosurface as one object, so one material is all it can wear.
+        std::string why;
+        std::string iso = povIsosurface(s, index, why);
+        if (iso.empty()) {
+            return "// warp not written: " + why + "\n";
+        }
+        std::uint16_t dressed = index;
+        for (std::uint16_t i = index; i < s.nodes.count && s.nodes[dressed].materialId == kNoMaterial; ++i) {
+            if (s.nodes[i].materialId != kNoMaterial) {
+                dressed = i;
+            }
+        }
+        iso += povMaterial(s, s.nodes[dressed], silhouette);
+        iso += transform;
+        iso += "}\n\n";
+        return iso;
     }
 
     // A transform prepends to the block, so the outermost transform is applied last -- POV reads
