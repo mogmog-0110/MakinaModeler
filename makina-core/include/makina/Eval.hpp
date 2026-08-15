@@ -23,11 +23,13 @@
 
 #pragma once
 
+#include "Bounds.hpp"
 #include "Fidelity.hpp"
 #include "Scene.hpp"
 #include "Sdf.hpp"
 #include "SorProfile.hpp"
 #include "SweepProfile.hpp"
+#include "Warp.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -63,7 +65,36 @@ inline double scaleFactorOf(const CsgNode& n) {
     return sx < sy ? (sx < sz ? sx : sz) : (sy < sz ? sy : sz);
 }
 
-/// Applies the inverse of one transform node to p.
+inline int warpKindOf(Op op) {
+    return op == Op::Twist ? MK_WARP_TWIST : (op == Op::Bend ? MK_WARP_BEND : MK_WARP_TAPER);
+}
+
+/// The rate a warp node stores, in the units Warp.hpp takes: radians per unit for the two that
+/// turn, the plain ratio for Taper.
+inline double warpRateOf(const CsgNode& n) {
+    const double r = n.params[0];
+    return static_cast<Op>(n.op) == Op::Taper ? r : r * 3.14159265358979323846 / 180.0;
+}
+
+/// Distance correction for a transform including a warp's Lipschitz bound, which needs the
+/// subtree's extent (D-14) and therefore the scene. The factor is what the field is divided by
+/// afterwards, so a warp contributes 1/L: the callers multiply corrections together and divide
+/// the primitive distance by the product.
+inline double scaleFactorOf(const Scene& s, std::uint16_t index) {
+    const CsgNode& n = s.nodes[index];
+    if (!isWarp(static_cast<Op>(n.op))) {
+        return scaleFactorOf(n);
+    }
+    const WarpExtent e = warpExtent(s, index, Fidelity{});
+    if (!e.valid) {
+        return 1.0;
+    }
+    return 1.0 / mkWarpLipschitz(warpKindOf(static_cast<Op>(n.op)), warpRateOf(n), e.R, e.H);
+}
+
+/// Applies the inverse of one transform node to p. A warp also needs the subtree's reach along
+/// its axis (Warp.hpp freezes the map beyond it), which the scene-aware overload supplies; this
+/// one is for the affine transforms only.
 inline void invApply(const CsgNode& n, const double p[3], double out[3]) {
     switch (static_cast<Op>(n.op)) {
         case Op::Translate:
@@ -103,6 +134,39 @@ inline void invApply(const CsgNode& n, const double p[3], double out[3]) {
             out[2] = s * p[1] + c * p[2];
             return;
     }
+}
+
+/// Applies the inverse of one transform node, warps included.
+inline void invApply(const Scene& s, std::uint16_t index, const double p[3], double out[3]) {
+    const CsgNode& n = s.nodes[index];
+    if (!isWarp(static_cast<Op>(n.op))) {
+        invApply(n, p, out);
+        return;
+    }
+    const WarpExtent e = warpExtent(s, index, Fidelity{});
+    mkWarpInv(warpKindOf(static_cast<Op>(n.op)), n.flags & flags::kAxisMask, warpRateOf(n),
+              e.valid ? e.H : 0.0, p[0], p[1], p[2], out[0], out[1], out[2]);
+}
+
+/// Distance from p (in the warp's own space) to the cube warpBounds draws around the warped
+/// children, or 0 when inside it. The cube is the same one Bounds.hpp uses, so the culling box
+/// and this guard agree about where the Lipschitz bound stops being sized for the point.
+inline double warpBoxDistance(const Scene& s, std::uint16_t index, const double p[3]) {
+    int count = 0;
+    const Aabb box = warpBounds(s, index, identityMat(), count, Fidelity{});
+    if (!box.valid) {
+        return 0.0;
+    }
+    double d2 = 0.0;
+    for (int c = 0; c < 3; ++c) {
+        const double lo = box.lo[c] - p[c];
+        const double hi = p[c] - box.hi[c];
+        const double e = lo > hi ? lo : hi;
+        if (e > 0.0) {
+            d2 += e * e;
+        }
+    }
+    return std::sqrt(d2);
 }
 
 /// Surface distance of a primitive in its own local space. kEmpty for anything without geometry.
@@ -239,8 +303,8 @@ inline void accumBlob(const Scene& s, std::uint16_t index, const double p[3], do
 
     if (isTransform(op)) {
         double q[3];
-        invApply(n, p, q);
-        const double k = minScale * scaleFactorOf(n);
+        invApply(s, index, p, q);
+        const double k = minScale * scaleFactorOf(s, index);
         for (std::uint16_t i = 0; i < n.childCount; ++i) {
             accumBlob(s, static_cast<std::uint16_t>(n.firstChild + i), q, k, t);
         }
@@ -371,10 +435,21 @@ inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], d
         return kEmpty;
     }
 
+    if (isWarp(op)) {
+        // Outside the warp's own box the Lipschitz bound is not sized for the point (the shear
+        // of a taper grows with distance from the axis, without limit), so the box's distance
+        // stands in: it is a true lower bound on the distance to anything inside, and a march
+        // that far out only needs to know it may step that far. Strictly outside only -- inside
+        // the box the distance is 0 and would erase the field (memory: lower-bound-two-traps).
+        const double outside = warpBoxDistance(s, index, p);
+        if (outside > 0.0) {
+            return outside * scale;
+        }
+    }
     if (isTransform(op)) {
         double q[3];
-        invApply(n, p, q);
-        return unionChildren(s, index, q, scale * scaleFactorOf(n), f);
+        invApply(s, index, p, q);
+        return unionChildren(s, index, q, scale * scaleFactorOf(s, index), f);
     }
 
     if (op == Op::Difference) {
@@ -418,11 +493,11 @@ inline double eval(const Scene& s, std::uint16_t index, const double wp[3], Fide
         const CsgNode& n = s.nodes[chain[i]];
         if (isTransform(static_cast<Op>(n.op))) {
             double q[3];
-            detail::invApply(n, p, q);
+            detail::invApply(s, chain[i], p, q);
             p[0] = q[0];
             p[1] = q[1];
             p[2] = q[2];
-            scale *= detail::scaleFactorOf(n);
+            scale *= detail::scaleFactorOf(s, chain[i]);
         }
     }
 

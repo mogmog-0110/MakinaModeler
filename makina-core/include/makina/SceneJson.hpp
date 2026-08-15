@@ -84,7 +84,7 @@ inline void fillNode(Scene& s, std::uint16_t index, const nlohmann::json& j) {
         for (int i = 0; i < 12 && entry->keys[i] != nullptr; ++i) {
             n.params[i] = j.value(entry->keys[i], 0.0f);
         }
-        if (entry->op == Op::Rotate) {
+        if (entry->op == Op::Rotate || isWarp(entry->op)) {
             n.flags |= axisFromString(j.value("axis", std::string("X")));
         }
         if (entry->op == Op::Cone && j.value("open", false)) {
@@ -332,7 +332,7 @@ inline nlohmann::ordered_json writeNode(const Scene& s, std::uint16_t index) {
     }
 
     if (entry != nullptr) {
-        if (op == Op::Rotate) {
+        if (op == Op::Rotate || isWarp(op)) {
             j["axis"] = axisToString(n.flags);
         }
         for (int i = 0; i < 12 && entry->keys[i] != nullptr; ++i) {

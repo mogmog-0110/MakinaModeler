@@ -33,6 +33,14 @@ enum class Op : std::uint8_t {
     Rotate    = 49,
     Scale     = 50,
 
+    // Warps (PLAN.md D-14): transforms that are not affine. Each bends the evaluation point of
+    // everything under it -- d'(p) = d(w^-1(p)) / L -- so the children need know nothing. The
+    // axis travels in flags like Rotate's; the one parameter is a rate per unit of length along
+    // that axis, in degrees for the two that turn.
+    Twist = 51,   ///< rotate about the axis by degreesPerUnit * (position along the axis)
+    Bend  = 52,   ///< wrap the axis onto a circle: degreesPerUnit is the arc turned per unit
+    Taper = 53,   ///< scale the two other axes by 1 + ratePerUnit * (position along the axis)
+
     // Booleans. n-ary: Difference takes children[0] minus the union of children[1..].
     Merge        = 64,
     Difference   = 65,
@@ -63,8 +71,15 @@ inline bool isPrimitive(Op op) {
     return op >= Op::Box && op <= Op::Triangle;
 }
 
+/// Warps count as transforms everywhere the tree is walked (Eval, Bounds, Edit, the shell): a
+/// warp wraps its children exactly as a Translate does. What sets them apart is that they cannot
+/// be folded into a matrix, which only Flatten and the exporter care about (isWarp).
 inline bool isTransform(Op op) {
-    return op >= Op::Translate && op <= Op::Scale;
+    return op >= Op::Translate && op <= Op::Taper;
+}
+
+inline bool isWarp(Op op) {
+    return op >= Op::Twist && op <= Op::Taper;
 }
 
 inline bool isBoolean(Op op) {
@@ -138,6 +153,10 @@ inline const OpEntry* opTable(int& count) {
         // "axis" travels in flags.
         {Op::Rotate,       "Rotate",       {"degree", nullptr}},
         {Op::Scale,        "Scale",        {"x", "y", "z", nullptr}},
+        // "axis" travels in flags for all three, like Rotate.
+        {Op::Twist,        "Twist",        {"degreesPerUnit", nullptr}},
+        {Op::Bend,         "Bend",         {"degreesPerUnit", nullptr}},
+        {Op::Taper,        "Taper",        {"ratePerUnit", nullptr}},
 
         {Op::Merge,        "Merge",        {nullptr}},
         {Op::Difference,   "Difference",   {nullptr}},

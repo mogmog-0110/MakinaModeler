@@ -105,6 +105,12 @@ inline void applyMat(const Mat4& m, const double p[3], double out[3]) {
 
 /// Forward transform of one node. Angles are degrees, right-handed, matching glRotate.
 inline Mat4 matrixOf(const CsgNode& n) {
+    // A warp has no matrix (D-14). Callers that walk ancestor chains through one get the
+    // identity, which places a warped child where its unwarped self would be -- fine for the
+    // pick and outliner uses of those chains, and warpBounds handles the box itself.
+    if (isWarp(static_cast<Op>(n.op))) {
+        return identityMat();
+    }
     switch (static_cast<Op>(n.op)) {
         case Op::Translate:
             return Mat4{{1, 0, 0, n.params[0],
@@ -259,6 +265,83 @@ inline int localCorners(const CsgNode& n, double out[8][3]) {
 
 Aabb subtreeBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& primitiveCount,
                    Fidelity f);
+Aabb childrenBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& count, Fidelity f);
+
+/// The children's box in the warp's own space: R is how far the box reaches from the axis, H how
+/// far along it. Both are what a warp's Lipschitz bound and its enclosing box are sized by, so
+/// they are computed in one place (PLAN.md D-14).
+struct WarpExtent {
+    double R;   ///< largest distance from the axis over the box's corners
+    double H;   ///< largest |coordinate| along the axis
+    bool   valid;
+};
+
+inline WarpExtent warpExtent(const Scene& s, std::uint16_t index, Fidelity f) {
+    int count = 0;
+    const Aabb box = childrenBounds(s, index, identityMat(), count, f);
+    WarpExtent e{0.0, 0.0, box.valid};
+    if (!box.valid) {
+        return e;
+    }
+    const int axis = s.nodes[index].flags & flags::kAxisMask;
+    double rho2 = 0.0;
+    for (int c = 0; c < 3; ++c) {
+        const double reach = std::fabs(box.lo[c]) > std::fabs(box.hi[c]) ? std::fabs(box.lo[c])
+                                                                          : std::fabs(box.hi[c]);
+        if (c == axis) {
+            e.H = reach;
+        }
+        rho2 += reach * reach;
+    }
+    // R is the radius of the cube warpBounds draws, not of the children's box: the Lipschitz
+    // bound must cover every point Eval hands to the warp, and Eval hands it everything inside
+    // that cube (warpBoxDistance guards the outside). The cube's corner is at sqrt(3) * rho * g,
+    // with g the taper's growth; taken from the same formula so the two cannot drift.
+    const double rho = std::sqrt(rho2);
+    double g = 1.0;
+    if (static_cast<Op>(s.nodes[index].op) == Op::Taper) {
+        g = 1.0 + std::fabs(s.nodes[index].params[0]) * e.H;
+    }
+    e.R = std::sqrt(3.0) * rho * g;
+    return e;
+}
+
+/// A box that holds the warped children. Deliberately loose: a cube about the warp's origin of
+/// half-size rho * g, where rho is the farthest corner of the unwarped box from the origin and g
+/// the largest stretch the forward map applies to it -- 1 for a twist (rotation) and a bend (the
+/// axis wraps onto an arc no farther out than it was), 1 + |rate| * H for a taper. Loose costs
+/// culling, never correctness; a tighter box can come once the warps have a picture to check it
+/// against.
+inline Aabb warpBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& primitiveCount,
+                       Fidelity f) {
+    const CsgNode& n = s.nodes[index];
+    int count = 0;
+    const Aabb local = childrenBounds(s, index, identityMat(), count, f);
+    primitiveCount += count;
+    if (!local.valid) {
+        return emptyAabb();
+    }
+    // The same cube warpExtent sizes its R by: half-size rho * g, corner at sqrt(3) times that.
+    const WarpExtent e = warpExtent(s, index, f);
+    const double r = e.R / std::sqrt(3.0);
+    (void)n;
+    Aabb cube{{-r, -r, -r}, {r, r, r}, true};
+    // Through the parent's matrix, corner by corner, the way every other box goes.
+    Aabb out = emptyAabb();
+    for (int i = 0; i < 8; ++i) {
+        const double corner[3] = {(i & 1) ? cube.hi[0] : cube.lo[0],
+                                  (i & 2) ? cube.hi[1] : cube.lo[1],
+                                  (i & 4) ? cube.hi[2] : cube.lo[2]};
+        double w[3];
+        applyMat(m, corner, w);
+        for (int c = 0; c < 3; ++c) {
+            if (!out.valid || w[c] < out.lo[c]) { out.lo[c] = w[c]; }
+            if (!out.valid || w[c] > out.hi[c]) { out.hi[c] = w[c]; }
+        }
+        out.valid = true;
+    }
+    return out;
+}
 
 inline Aabb childrenBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& count,
                            Fidelity f) {
@@ -276,6 +359,9 @@ inline Aabb subtreeBounds(const Scene& s, std::uint16_t index, const Mat4& m, in
     const CsgNode& n = s.nodes[index];
     const Op op = static_cast<Op>(n.op);
 
+    if (isWarp(op)) {
+        return warpBounds(s, index, m, primitiveCount, f);
+    }
     if (isTransform(op)) {
         const Mat4 mc = mulMat(m, matrixOf(n));
         return childrenBounds(s, index, mc, primitiveCount, f);

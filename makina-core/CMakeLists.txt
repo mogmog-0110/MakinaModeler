@@ -73,6 +73,10 @@ target_link_libraries(blob_check PRIVATE makina_core)
 add_executable(viewstate_check tests/viewstate_check.cpp)
 target_link_libraries(viewstate_check PRIVATE makina_core)
 
+# Domain warps (D-14): the invariants the maths gives, and the numeric gradient staying under 1.
+add_executable(warp_check tests/warp_check.cpp)
+target_link_libraries(warp_check PRIVATE makina_core)
+
 # The fourth agreement: the mesh that leaves the project, against the field that stays in it.
 add_executable(mesh_compare tests/mesh_compare.cpp)
 target_link_libraries(mesh_compare PRIVATE makina_core)
@@ -91,7 +95,7 @@ target_link_libraries(makina_edit PRIVATE makina_core)
 
 foreach(t roundtrip sdf_compare measure_compare pov_compare bsp_compare edit_check command_check
           camera_check pick_check keymap_check transform_check material_check mesh_compare
-          pov_import_check blob_check viewstate_check selection_check
+          pov_import_check blob_check viewstate_check selection_check warp_check
           makina_edit makina_mesh makina_povin)
     if(MSVC)
         # /utf-8: sources are UTF-8 but MSVC otherwise assumes the ANSI code page.
@@ -128,6 +132,7 @@ if(FIXTURE_SCENES)
     add_test(NAME mesh_compare COMMAND mesh_compare ${FIXTURE_SCENES})
     add_test(NAME pov_import_check COMMAND pov_import_check ${FIXTURE_SCENES})
     add_test(NAME blob_check COMMAND blob_check)
+    add_test(NAME warp_check COMMAND warp_check)
 else()
     message(WARNING "tests/scenes holds no scenes; ctest will have nothing to run")
 endif()
