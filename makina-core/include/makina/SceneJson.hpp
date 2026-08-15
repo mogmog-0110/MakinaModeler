@@ -324,9 +324,13 @@ inline nlohmann::ordered_json writeNode(const Scene& s, std::uint16_t index) {
 
 }  // namespace detail
 
-/// Parses scene JSON. Throws SceneJsonError on a version it does not understand, rather than
-/// guessing at the meaning of fields that may have changed.
-inline Scene parseScene(const std::string& text) {
+/// Parses scene JSON into `s`, replacing whatever it held. Throws SceneJsonError on a version
+/// it does not understand, rather than guessing at the meaning of fields that may have changed.
+///
+/// The in-place form is the primary one because a Scene is ~390 KB (Scene.hpp): returning it
+/// by value puts a whole copy on the caller's frame, and two of those in one call chain are past
+/// a default 1 MB thread stack. Callers that own their Scene on the heap parse straight into it.
+inline void parseSceneInto(Scene& s, const std::string& text) {
     nlohmann::json j;
     try {
         j = nlohmann::json::parse(text);
@@ -346,7 +350,7 @@ inline Scene parseScene(const std::string& text) {
                              std::to_string(kSceneFormatVersion) + ")");
     }
 
-    Scene s{};
+    s = Scene{};
     s.nextId = j.value("nextId", 1u);
 
     if (j.contains("materials") && j["materials"].is_array()) {
@@ -398,7 +402,13 @@ inline Scene parseScene(const std::string& text) {
         throw SceneJsonError("scene has no \"root\"");
     }
     detail::readRoot(s, j["root"]);
+}
 
+/// By-value convenience for callers whose stack can afford one Scene: tools and tests linked
+/// with a widened stack. Anything holding a Scene as a member should use parseSceneInto.
+inline Scene parseScene(const std::string& text) {
+    Scene s{};
+    parseSceneInto(s, text);
     return s;
 }
 
