@@ -79,7 +79,11 @@ struct EvalNode {
     /// two entries -- the index is per node for that reason, and the table is built by the flatten
     /// rather than copied from the scene.
     std::uint32_t pigmentId;
-    std::uint32_t _pad;
+    /// The warps between the world and this leaf's `inv`, as (offset << 8) | count into
+    /// EvalProgram::warps, or 0 for none (D-14). The generated shader unrolls them in front of
+    /// the leaf: p goes through each warp's own world->warp matrix and inverse map in turn, and
+    /// only then through `inv`. Packed into what was padding so the node stays 80 bytes.
+    std::uint32_t warpRef;
     /// Primitive dimensions. [3] carries the distance correction, never a dimension.
     float params[4];
     /// world -> local, three rows of four.
@@ -124,9 +128,17 @@ struct EvalProgram {
     /// Sweep samples, flat (x, y, z, radius) quads; an EvalOp::SphereSweep node points into
     /// this, and the generated shader inlines it the same way it inlines a sor's polyline.
     std::vector<float> sweepProfiles;
+    /// Warp entries, kWarpFloats each: {kind*4+axis, rate, H, guard, inv[12], corrAbove, pad3}
+    /// where inv takes the enclosing space into the warp's own, guard is the half-size of the
+    /// cube Bounds.hpp draws around the warped children, and corrAbove the distance correction
+    /// of the transforms above the warp. Leaves point into this through EvalNode::warpRef.
+    std::vector<float> warps;
     int maxStackDepth = 0;
     FlattenReport report;
 };
+
+/// Floats per entry in EvalProgram::warps.
+constexpr int kWarpFloats = 20;
 
 /// The most EvalNodes any Scene can flatten to. A program is bigger than its scene: an n-ary
 /// boolean of k children becomes k-1 binary nodes (worst case, a root union of N-1 leaves,
@@ -222,7 +234,30 @@ struct FlattenContext {
     std::vector<GpuPigment> pigments;
     std::vector<float> sorProfiles;
     std::vector<float> sweepProfiles;
+    std::vector<float> warps;
+    /// The warps enclosing the node being flattened, outermost first, each kWarpFloats. Every
+    /// leaf emitted while this is non-empty copies it into `warps` and points at the copy.
+    std::vector<float> warpChain;
 };
+
+/// Records the current warp chain for a leaf: returns the packed reference for EvalNode::warpRef.
+inline std::uint32_t internWarpChain(FlattenContext& ctx) {
+    if (ctx.warpChain.empty()) {
+        return 0u;
+    }
+    const std::uint32_t count = static_cast<std::uint32_t>(ctx.warpChain.size() / kWarpFloats);
+    // Reuse the last chain if it is the same, which it is for every leaf under one warp.
+    const std::size_t bytes = ctx.warpChain.size();
+    if (ctx.warps.size() >= bytes &&
+        std::memcmp(ctx.warps.data() + ctx.warps.size() - bytes, ctx.warpChain.data(),
+                    bytes * sizeof(float)) == 0) {
+        const std::uint32_t offset = static_cast<std::uint32_t>((ctx.warps.size() - bytes) / kWarpFloats);
+        return (offset << 8) | count;
+    }
+    const std::uint32_t offset = static_cast<std::uint32_t>(ctx.warps.size() / kWarpFloats);
+    ctx.warps.insert(ctx.warps.end(), ctx.warpChain.begin(), ctx.warpChain.end());
+    return (offset << 8) | count;
+}
 
 /// Interns one (pattern, object space) pair, so two solids wearing the same texture in the same
 /// place share an entry and two in different places do not.
@@ -367,6 +402,7 @@ inline bool emitPrimitive(FlattenContext& ctx, const CsgNode& n, const Mat4& wor
     for (int r = 0; r < 12; ++r) {
         e.inv[r] = static_cast<float>(inv.m[r]);
     }
+    e.warpRef = internWarpChain(ctx);
 
     out.push_back(e);
     return true;
@@ -463,6 +499,7 @@ inline void collectBlobLeaves(FlattenContext& ctx, std::uint16_t index, const Ma
         for (int r = 0; r < 12; ++r) {
             e.inv[r] = static_cast<float>(inv.m[r]);
         }
+        e.warpRef = internWarpChain(ctx);
         lipschitz += blobLipschitz(radius, strength) / nz(corr / blobCorr);
 
         // The support box in world space, for the finish node: the canonical support is a box
@@ -600,6 +637,37 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
 
     // Label falls through to the container path: it emits nothing of its own but its children are
     // geometry (Fidelity.hpp). It is still skipped as a boolean *operand*, below.
+    if (isWarp(op)) {
+        // The matrix accumulated so far takes world into this warp's space; the leaves below
+        // start again from the identity, because what sits between them and the world is no
+        // longer a matrix but this chain (D-14). The distance correction takes 1/L.
+        Mat4 inv{};
+        if (!invertAffine(world, inv)) {
+            ++ctx.report.skippedUnsupported;
+            return Fragment{};
+        }
+        const WarpExtent e = warpExtent(*ctx.scene, index, Fidelity{});
+        const std::size_t mark = ctx.warpChain.size();
+        ctx.warpChain.push_back(static_cast<float>(warpKindOf(op) * 4 + (n.flags & flags::kAxisMask)));
+        ctx.warpChain.push_back(static_cast<float>(warpRateOf(n)));
+        ctx.warpChain.push_back(static_cast<float>(e.valid ? e.H : 0.0));
+        // The guard cube's half-size, the same number Eval's warpBoxDistance measures against
+        // (warpExtent's R is the cube's corner). Outside it the leaf returns the cube distance.
+        ctx.warpChain.push_back(static_cast<float>(e.valid ? e.R / std::sqrt(3.0) : 0.0));
+        for (int r = 0; r < 12; ++r) {
+            ctx.warpChain.push_back(static_cast<float>(inv.m[r]));
+        }
+        ctx.warpChain.push_back(static_cast<float>(scaleCorrection));
+        ctx.warpChain.push_back(0.0f);
+        ctx.warpChain.push_back(0.0f);
+        ctx.warpChain.push_back(0.0f);
+        Fragment f = flattenChildren(ctx, index, identityMat(),
+                                     carriesTexture ? identityMat() : textureWorld,
+                                     scaleCorrection * scaleFactorOf(*ctx.scene, index),
+                                     EvalOp::Union, underBoolean);
+        ctx.warpChain.resize(mark);
+        return f;
+    }
     if (isTransform(op)) {
         const Mat4 child = mulMat(world, matrixOf(n));
         return flattenChildren(ctx, index, child, carriesTexture ? identityMat() : textureWorld,
@@ -689,6 +757,7 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         for (int r = 0; r < 12; ++r) {
             e.inv[r] = static_cast<float>(inv.m[r]);
         }
+        e.warpRef = internWarpChain(ctx);
         for (int i = 0; i < num; ++i) {
             ctx.sorProfiles.push_back(static_cast<float>(side[i][0]));
             ctx.sorProfiles.push_back(static_cast<float>(side[i][1]));
@@ -727,6 +796,7 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         for (int r = 0; r < 12; ++r) {
             e.inv[r] = static_cast<float>(inv.m[r]);
         }
+        e.warpRef = internWarpChain(ctx);
         for (int i = 0; i < num; ++i) {
             for (int k = 0; k < 4; ++k) {
                 ctx.sweepProfiles.push_back(static_cast<float>(samples[i][k]));
@@ -777,7 +847,54 @@ constexpr int kMaxEvalStack = 32;
 /// Lifted out so the distance walk and the surface walk below cannot drift: two copies of a
 /// primitive table is exactly the kind of difference that shows up as one shape being subtly the
 /// wrong size in one of the two answers, with nothing to point at.
-inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double wp[3]) {
+/// Sends a world point through a leaf's warp chain (D-14): for each warp, outermost first, into
+/// the warp's space by its matrix and then through its inverse map. The result is the point the
+/// leaf's own `inv` expects. Identity when the leaf has no warps. The generated shader emits the
+/// same steps inline (scene_codegen.hpp), so this and the shader read the same table.
+///
+/// Returns the distance to the outermost guard cube the point falls outside of, already scaled
+/// by the corrections of the transforms above that warp, or 0 when the point is inside every
+/// cube. Outside a cube the Lipschitz bound is not sized for the point, and the leaf
+/// answers with that distance instead of its field -- exactly what Eval::warpBoxDistance does,
+/// so the two routes keep giving one number.
+inline double throughWarps(const EvalProgram& prog, const EvalNode& n, const double wp[3],
+                           double out[3]) {
+    out[0] = wp[0];
+    out[1] = wp[1];
+    out[2] = wp[2];
+    const std::uint32_t count = n.warpRef & 0xffu;
+    std::size_t at = static_cast<std::size_t>(n.warpRef >> 8) * kWarpFloats;
+    for (std::uint32_t i = 0; i < count; ++i, at += kWarpFloats) {
+        const float* w = prog.warps.data() + at;
+        const double px = w[4] * out[0] + w[5] * out[1] + w[6] * out[2] + w[7];
+        const double py = w[8] * out[0] + w[9] * out[1] + w[10] * out[2] + w[11];
+        const double pz = w[12] * out[0] + w[13] * out[1] + w[14] * out[2] + w[15];
+        const double guard = w[3];
+        if (guard > 0.0) {
+            double d2 = 0.0;
+            const double q[3] = {px, py, pz};
+            for (int c = 0; c < 3; ++c) {
+                const double e = std::fabs(q[c]) - guard;
+                if (e > 0.0) {
+                    d2 += e * e;
+                }
+            }
+            if (d2 > 0.0) {
+                return std::sqrt(d2) * w[16];
+            }
+        }
+        const int kindAxis = static_cast<int>(w[0]);
+        mkWarpInv(kindAxis / 4, kindAxis % 4, w[1], w[2], px, py, pz, out[0], out[1], out[2]);
+    }
+    return 0.0;
+}
+
+inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double wpIn[3]) {
+    double wp[3];
+    const double outside = throughWarps(prog, n, wpIn, wp);
+    if (outside > 0.0) {
+        return outside;
+    }
     const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];
     const double y = n.inv[4] * wp[0] + n.inv[5] * wp[1] + n.inv[6] * wp[2] + n.inv[7];
     const double z = n.inv[8] * wp[0] + n.inv[9] * wp[1] + n.inv[10] * wp[2] + n.inv[11];
@@ -844,11 +961,14 @@ inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double 
 /// distance to the box every support sits inside -- zero within the box, so it never fights
 /// the field where the field is live. params[2] of 0 means the box was degenerate and only the
 /// field bound speaks.
-inline double evalBlobFinish(const EvalNode& n, double field, const double wp[3]) {
+inline double evalBlobFinish(const EvalProgram& prog, const EvalNode& n, double field,
+                             const double wpIn[3]) {
     const double d = (static_cast<double>(n.params[0]) - field) / n.params[1] * n.params[3];
     if (n.params[2] <= 0.0f) {
         return d;
     }
+    double wp[3];
+    throughWarps(prog, n, wpIn, wp);
     const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];
     const double y = n.inv[4] * wp[0] + n.inv[5] * wp[1] + n.inv[6] * wp[2] + n.inv[7];
     const double z = n.inv[8] * wp[0] + n.inv[9] * wp[1] + n.inv[10] * wp[2] + n.inv[11];
@@ -878,7 +998,7 @@ inline double evalProgram(const EvalProgram& prog, const double wp[3]) {
             if (sp < 1) {
                 return kEmpty;
             }
-            stack[sp - 1] = evalBlobFinish(n, stack[sp - 1], wp);
+            stack[sp - 1] = evalBlobFinish(prog, n, stack[sp - 1], wp);
             continue;
         }
         if (n.op >= static_cast<std::uint32_t>(EvalOp::Union)) {
@@ -938,7 +1058,7 @@ inline ProgramSurface evalProgramSurface(const EvalProgram& prog, const double w
             // The whole blob is one surface, and the finish node is what wears its material --
             // the density leaves below it never surface on their own.
             ProgramSurface r;
-            r.distance = evalBlobFinish(n, stack[sp - 1].distance, wp);
+            r.distance = evalBlobFinish(prog, n, stack[sp - 1].distance, wp);
             r.materialId = n.materialId;
             r.pigmentId = n.pigmentId;
             stack[sp - 1] = r;
@@ -985,13 +1105,14 @@ inline EvalProgram flatten(const Scene& s) {
         return out;
     }
 
-    detail::FlattenContext ctx{&s, {}, {}, {}, {}};
+    detail::FlattenContext ctx{&s, {}, {}, {}, {}, {}, {}};
     out.nodes = detail::flattenNode(ctx, 0, detail::identityMat(), detail::identityMat(), 1.0,
                                     detail::kTopLevel);
     out.report = ctx.report;
     out.pigments = std::move(ctx.pigments);
     out.sorProfiles = std::move(ctx.sorProfiles);
     out.sweepProfiles = std::move(ctx.sweepProfiles);
+    out.warps = std::move(ctx.warps);
 
     // Stack depth of the emitted sequence, which is what sizes the shader's array.
     int depth = 0;

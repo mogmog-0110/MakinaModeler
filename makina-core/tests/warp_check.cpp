@@ -12,6 +12,7 @@
 
 #include <makina/Bounds.hpp>
 #include <makina/Eval.hpp>
+#include <makina/Flatten.hpp>
 #include <makina/SceneJson.hpp>
 
 #include <cmath>
@@ -154,6 +155,46 @@ void taper() {
     check(g <= 1.0 + 1e-3, "tapered field gradient exceeds 1: the march could step through");
 }
 
+/// The flattened program must read the same field as the tree evaluator through the warp: the
+/// tree applies the inverse map on the way down, the program carries it in a side table and
+/// applies it in front of each leaf. Two routes, one number, on a lattice around each warp.
+void programAgrees() {
+    std::printf("the flattened program agrees with the tree through every warp\n");
+    const char* const cases[3][3] = {{"Twist", "degreesPerUnit", "Y"},
+                                     {"Bend", "degreesPerUnit", "Y"},
+                                     {"Taper", "ratePerUnit", "Y"}};
+    const double rates[3] = {90.0, 60.0, 0.5};
+    for (int c = 0; c < 3; ++c) {
+        // Wrapped in a Translate so the warp's world->warp matrix is not the identity, and
+        // with a boolean below so both leaf kinds and the correction ride the chain.
+        const std::string inner = boxUnder(cases[c][0], cases[c][1], rates[c], cases[c][2]);
+        const makina::Scene s = makina::parseScene(
+            "{\"format\":\"makina-scene\",\"version\":1,\"nextId\":9,\"materials\":[],"
+            "\"root\":{\"id\":1,\"op\":\"SceneRoot\",\"children\":[{\"id\":8,\"op\":"
+            "\"Translate\",\"x\":0.2,\"y\":0.1,\"z\":-0.3,\"children\":[" + inner + "]}]}}");
+        const makina::EvalProgram prog = makina::flatten(s);
+        check(!prog.warps.empty(), std::string(cases[c][0]) + ": the program should carry a warp");
+        double worst = 0.0;
+        constexpr int kSteps = 9;
+        for (int i = 0; i < kSteps; ++i) {
+            for (int j = 0; j < kSteps; ++j) {
+                for (int k = 0; k < kSteps; ++k) {
+                    const double p[3] = {-1.5 + 3.0 * i / (kSteps - 1), -1.5 + 3.0 * j / (kSteps - 1),
+                                         -1.5 + 3.0 * k / (kSteps - 1)};
+                    const double a = makina::eval(s, p);
+                    const double b = makina::evalProgram(prog, p);
+                    const double d = std::fabs(a - b);
+                    if (d > worst) {
+                        worst = d;
+                    }
+                }
+            }
+        }
+        std::printf("    %s: worst tree/program difference %.2e\n", cases[c][0], worst);
+        check(worst < 1e-5, std::string(cases[c][0]) + ": the program disagrees with the tree");
+    }
+}
+
 void roundTrip() {
     std::printf("json round trip keeps the axis and the rate\n");
     const makina::Scene s = makina::parseScene(sceneWith(boxUnder("Twist", "degreesPerUnit", 45, "Z")));
@@ -171,6 +212,7 @@ int main() {
     twist();
     bend();
     taper();
+    programAgrees();
     roundTrip();
     std::printf("\n%d checks", checks);
     if (failures > 0) {
