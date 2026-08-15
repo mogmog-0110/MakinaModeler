@@ -771,7 +771,7 @@ void sweepImport() {
 /// 0.6. Order must not matter -- POV's slots have none -- and a declared texture must carry its
 /// diffuse to every object that wears it.
 void finishDiffuse() {
-    std::printf("finish diffuse folds into the material\n");
+    std::printf("finish diffuse reaches the material whichever order the blocks come in\n");
     const char* const kBoth[2] = {
         "sphere{<0,0,0>,1 pigment{color rgb <0.6,0.3,0.3>} finish{ambient 0.2 diffuse 0.9}}",
         "sphere{<0,0,0>,1 texture{finish{ambient 0.2 diffuse 0.9} pigment{color rgb "
@@ -782,10 +782,11 @@ void finishDiffuse() {
             check(r.unsupported.empty(), "the diffuse finish should read whole");
             check(r.scene.materials.count == 1, "one material expected");
             const makina::Material& m = r.scene.materials[0];
-            check(std::fabs(m.diffuse[0] - 0.9f) < 1e-6f && std::fabs(m.diffuse[1] - 0.45f) < 1e-6f,
-                  "the pigment should scale by d/0.6 whichever order the blocks come in");
-            check(std::fabs(m.ambient - 0.2f * 0.6f / 0.9f) < 1e-6f,
-                  "the ambient should scale by 0.6/d");
+            check(std::fabs(m.diffuse[0] - 0.6f) < 1e-6f && std::fabs(m.diffuse[1] - 0.3f) < 1e-6f,
+                  "the pigment should be held as written, not rescaled");
+            check(std::fabs(m.finishDiffuse - 0.9f) < 1e-6f, "diffuse should reach the field");
+            check(std::fabs(m.ambient - 0.2f) < 1e-6f, "the ambient should be held as written");
+            check(makina::toGpuMaterial(m).diffuse == 0.9f, "diffuse should reach the shader");
         } catch (const makina::PovParseError& e) {
             check(false, std::string("the diffuse finish was refused: ") + e.what());
         }
@@ -795,23 +796,51 @@ void finishDiffuse() {
         const makina::PovImportResult r = makina::importPov(
             "#declare T = texture{pigment{color rgb <0.6,0.6,0.6>} finish{diffuse 0.3}}\n"
             "sphere{<0,0,0>,1 texture{T}}");
-        check(std::fabs(r.scene.materials[0].diffuse[0] - 0.3f) < 1e-6f,
+        check(std::fabs(r.scene.materials[0].finishDiffuse - 0.3f) < 1e-6f,
               "a declared texture should carry its diffuse to the object wearing it");
 
         makina::PovOptions opt;
-        const makina::PovImportResult back = makina::importPov(makina::writePov(r.scene, opt));
+        const std::string pov = makina::writePov(r.scene, opt);
+        check(pov.find(" diffuse ") != std::string::npos, "the exporter should write diffuse");
+        const makina::PovImportResult back = makina::importPov(pov);
         check(back.scene.materials.count == 1 &&
-                  std::fabs(back.scene.materials[0].diffuse[0] -
-                            r.scene.materials[0].diffuse[0]) < 1e-6f,
-              "the scaled material should survive the POV round trip unchanged");
+                  std::fabs(back.scene.materials[0].finishDiffuse - 0.3f) < 1e-6f,
+              "diffuse should survive the POV round trip unchanged");
+        const makina::Scene viaJson = makina::parseScene(makina::writeScene(r.scene));
+        check(std::fabs(viaJson.materials[0].finishDiffuse - 0.3f) < 1e-6f,
+              "diffuse should survive the JSON round trip");
     } catch (const makina::PovParseError& e) {
         check(false, std::string("the declared diffuse texture was refused: ") + e.what());
     }
 
-    // The two cases the rescale cannot hold, named rather than silently wrong.
-    notes("sphere{<0,0,0>,1 pigment{checker color rgb <1,0,0> color rgb <0,1,0>} "
-          "finish{diffuse 0.9}}",
-          "finish diffuse with a pattern");
+    // A pattern with its own diffuse: the case the old color rescale could not hold, and the
+    // reason the field exists (scene.pov's door is gradient x + diffuse 0.78).
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere{<0,0,0>,1 pigment{checker color rgb <1,0,0> color rgb <0,1,0>} "
+            "finish{diffuse 0.9}}");
+        check(r.unsupported.empty(), "a pattern with a diffuse should read whole");
+        check(std::fabs(r.scene.materials[0].finishDiffuse - 0.9f) < 1e-6f,
+              "the pattern's diffuse should reach the field");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the patterned diffuse was refused: ") + e.what());
+    }
+
+    // Unset stays unset in every file and shades as POV's 0.6.
+    try {
+        const makina::PovImportResult r = makina::importPov("sphere{<0,0,0>,1 pigment{color rgb 1}}");
+        check(r.scene.materials[0].finishDiffuse == 0.0f, "an unset diffuse should stay zero");
+        check(makina::toGpuMaterial(r.scene.materials[0]).diffuse == 0.6f,
+              "an unset diffuse should shade as POV's 0.6");
+        makina::PovOptions opt;
+        check(makina::writePov(r.scene, opt).find(" diffuse ") == std::string::npos,
+              "the exporter should not write an unset diffuse");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the plain sphere was refused: ") + e.what());
+    }
+
+    // The one case with no field form: zero is "unset", so diffuse 0 becomes a black color, and
+    // beside a lit ambient that is named rather than silently wrong.
     notes("sphere{<0,0,0>,1 pigment{color rgb <1,0,0>} finish{ambient 0.3 diffuse 0}}",
           "finish diffuse 0");
 }

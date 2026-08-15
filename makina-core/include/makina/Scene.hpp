@@ -71,8 +71,16 @@ struct Material {
     /// writes that and no fixture wants it -- the ambiguity is resolved in favour of every scene
     /// that already exists.
     float brilliance;
+    /// POV's finish{diffuse}: how much of the lamp the surface scatters. 0.6 is POV's default and
+    /// what every Grasp3D file means. Named finishDiffuse because `diffuse` above is the color.
+    ///
+    /// Zero means "unset" and reads as 0.6, the same rule as brilliance. This used to be folded
+    /// into the color (pigment * d/0.6, ambient * 0.6/d), which is exact for a flat color but has
+    /// no form for a patterned pigment -- scene.pov's door is gradient + diffuse 0.78 -- and none
+    /// for diffuse 0 beside a lit ambient. A field has a form for all of them.
+    float finishDiffuse;
 };
-static_assert(sizeof(Material) == 48, "Material grew for brilliance; JSON reads older files as-is");
+static_assert(sizeof(Material) == 52, "Material grew for brilliance and finishDiffuse; JSON reads older files as-is");
 static_assert(std::is_trivially_copyable_v<Material>);
 
 /// What a POV-Ray pigment pattern is, as far as this renderer goes.

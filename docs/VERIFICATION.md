@@ -626,10 +626,14 @@ max に通すと負の内部距離が消える**。この罠は evalBlob のサ�
   `area_light <..>, <..>, 9, 9` のカンマで顕在化。ネットの .pov を読むという
   方針転換がなければ眠り続けた。
 
-`finish{diffuse}` はスロットを増やさず**代数で**取り込んだ: POV の陰影は
+`finish{diffuse}` は最初、スロットを増やさず**代数で**取り込んだ: POV の陰影は
 pigment·(ambient + d·光) で d の既定は 0.6、これは pigment×d/0.6・ambient×0.6/d と
-同値なので、40 byte の Material と保存済み全シーンがそのまま生きる。
-写せない 2 形（パターン色・diffuse 0 + 正 ambient）は名指しで報告する。
+同値なので Material を触らずに済む。ただしパターン色には形が無く、scene.pov の扉
+（gradient x + diffuse 0.78）がそこで止まった。brilliance で Material をどのみち広げたので、
+`finishDiffuse` を 4 byte 足して畳み込みは撤去した（0 = 未指定 = 0.6、既定なら書かない）。
+同値であることは実写でも見た: pingu の色照合は畳み込み 2.62 → field 2.62 で 1 画素も動かない。
+残る写せない形は diffuse 0 + 正 ambient の 1 つだけ（0 は未指定と衝突するので黒色で持ち、
+ambient が光る場合は名指し）。
 
 単発の照合はそれぞれ `spike/blob-silhouette-check.bat` / `sor-` / `sweep-` /
 `pingu-silhouette-check.bat` / `pingu-color-check.bat`。pingu の 2 本が 320×180 なのは

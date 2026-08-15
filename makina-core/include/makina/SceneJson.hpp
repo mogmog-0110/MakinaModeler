@@ -378,6 +378,7 @@ inline void parseSceneInto(Scene& s, const std::string& text) {
             dst.reflection = m.value("reflection", 0.0f);
             dst.ior = m.value("ior", 1.0f);
             dst.brilliance = m.value("brilliance", 1.0f);
+            dst.finishDiffuse = m.value("finishDiffuse", 0.6f);
             if (m.contains("pigment") && m["pigment"].is_object()) {
                 if (s.pigments.count >= Scene::kMaxPigments) {
                     throw SceneJsonError("scene exceeds the " +
@@ -458,6 +459,9 @@ inline std::string writeScene(const Scene& s, const std::string& sourceFile = {}
             // Same rule: one is POV's default and what an unset field means, so only another value
             // is worth a line.
             mats.back()["brilliance"] = m.brilliance;
+        }
+        if (m.finishDiffuse != 0.0f && m.finishDiffuse != 0.6f) {
+            mats.back()["finishDiffuse"] = m.finishDiffuse;
         }
         if (m.textureId >= 0 && static_cast<std::uint32_t>(m.textureId) < s.pigments.count) {
             mats.back()["pigment"] = detail::writePigment(s.pigments[m.textureId]);

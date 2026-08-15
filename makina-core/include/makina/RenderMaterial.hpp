@@ -108,8 +108,9 @@ inline GpuMaterial toGpuMaterial(const Material& m) {
     g.emission = m.emission;
     g.textureIndex = static_cast<float>(m.textureId);
     g.reflection = m.reflection;
-    // Zero is the unset value (Scene.hpp) and means POV's default of one.
+    // Zero is the unset value (Scene.hpp) and means POV's default.
     g.brilliance = m.brilliance > 0.0f ? m.brilliance : povDefaults::kBrilliance;
+    g.diffuse = m.finishDiffuse > 0.0f ? m.finishDiffuse : povDefaults::kDiffuse;
     // Below one is what a scene written before this field existed reads back as, and POV has no
     // meaning for it. Folded to one here so the shader has a single case to handle.
     g.ior = m.ior > 1.0f ? m.ior : 1.0f;

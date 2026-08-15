@@ -813,9 +813,9 @@
     {
       "id": 0,
       "diffuse": [
-        306,
-        306,
-        306
+        255,
+        255,
+        255
       ],
       "alpha": 1.0,
       "ambient": 0.0,
@@ -823,35 +823,38 @@
       "shininess": 116.4800033569336,
       "emission": 0.0,
       "texture": null,
-      "brilliance": 0.8999999761581421
+      "brilliance": 0.8999999761581421,
+      "finishDiffuse": 0.7200000286102295
     },
     {
       "id": 1,
       "diffuse": [
-        278,
-        271,
-        258
+        238,
+        232,
+        222
       ],
       "alpha": 1.0,
       "ambient": 0.0,
       "specular": 0.3499999940395355,
       "shininess": 124.16000366210938,
       "emission": 0.0,
-      "texture": null
+      "texture": null,
+      "finishDiffuse": 0.699999988079071
     },
     {
       "id": 2,
       "diffuse": [
-        0,
-        0,
-        0
+        1,
+        1,
+        1
       ],
       "alpha": 1.0,
       "ambient": 0.0,
       "specular": 0.6000000238418579,
       "shininess": 125.44000244140625,
       "emission": 0.0,
-      "texture": null
+      "texture": null,
+      "finishDiffuse": 0.4000000059604645
     }
   ]
 }

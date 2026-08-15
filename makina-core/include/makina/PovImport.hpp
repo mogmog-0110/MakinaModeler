@@ -93,12 +93,9 @@ struct PovMacro {
 
 /// A material being read, plus the one finish term Material has no slot for.
 ///
-/// POV shades pigment * (ambient + diffuse * light) with diffuse defaulting to 0.6, and
-/// RenderMaterial bakes that same 0.6. Another diffuse d is therefore held exactly by scaling:
-/// pigment * d/0.6 and ambient * 0.6/d leave every term of POV's sum unchanged, and the
-/// exporter writing no diffuse keyword closes the loop through POV's default. The factor rides
-/// here until the appearance is interned, because pigment and finish arrive in either order and
-/// the scale must apply once, after both.
+/// finish{diffuse} rides here until the appearance is interned, because pigment and finish
+/// arrive in either order and the value must be settled once, after both: it becomes
+/// Material::finishDiffuse, except diffuse 0, which has no field form and becomes a black color.
 struct PovAppearance {
     Material material{};
     /// finish{diffuse}, or negative while the file has not named one.
@@ -1898,16 +1895,15 @@ private:
         return applyMove(std::move(node), kind, v);
     }
 
-    /// Interns an appearance, applying the finish{diffuse} rescale exactly once.
+    /// Interns an appearance, settling finish{diffuse} exactly once.
     int materialIndex(const PovAppearance& a) {
         Material m = a.material;
         if (a.finishDiffuse >= 0.0 && std::fabs(a.finishDiffuse - 0.6) > 1e-9) {
-            if (m.textureId >= 0) {
-                // A pattern's colors live in the pigment table, out of this rescale's reach.
-                note("finish diffuse with a pattern");
-            } else if (a.finishDiffuse <= 0.0) {
-                // Diffuse zero beside a lit ambient has no scaled form: the pigment would have
-                // to be black for the lamps and colored for the ambient at once.
+            if (a.finishDiffuse <= 0.0) {
+                // Zero is the field's "unset" value (Scene.hpp), so diffuse 0 is held as a black
+                // color instead: the lamps then contribute nothing, which is what POV draws.
+                // Beside a lit ambient that has no form -- the pigment would have to be black
+                // for the lamps and colored for the ambient at once -- so it is named.
                 if (m.ambient > 0.0f) {
                     note("finish diffuse 0");
                 }
@@ -1915,11 +1911,7 @@ private:
                     m.diffuse[c] = 0.0f;
                 }
             } else {
-                const double k = a.finishDiffuse / 0.6;
-                for (int c = 0; c < 3; ++c) {
-                    m.diffuse[c] = static_cast<float>(m.diffuse[c] * k);
-                }
-                m.ambient = static_cast<float>(m.ambient / k);
+                m.finishDiffuse = static_cast<float>(a.finishDiffuse);
             }
         }
         return materialIndex(m);

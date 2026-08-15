@@ -79,6 +79,7 @@ Grasp3D の `.gsf` へ書き戻す経路は**作らない**。
       //   "ior": 1.5                   POV interior{ior}。既定 1
       //   "brilliance": 0.9            POV finish{brilliance}: 拡散項の N·L の指数。既定 1
       //                                （POV に吐かせて cos^b と 4 桁一致、spike/pov_brilliance_probe.py）
+      //   "finishDiffuse": 0.78        POV finish{diffuse}: 拡散の係数。既定 0.6。"diffuse" は色なので別名
       //   "pigment": {...}             §3 参照
     }
   ]

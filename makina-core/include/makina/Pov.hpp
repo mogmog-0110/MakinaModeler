@@ -231,6 +231,9 @@ inline std::string povMaterial(const Scene& s, const CsgNode& n, bool silhouette
         // One is POV's own default, so writing it would only change the file, not the picture.
         t += " brilliance " + num(m.brilliance);
     }
+    if (m.finishDiffuse != 0.0f && m.finishDiffuse != 0.6f) {
+        t += " diffuse " + num(m.finishDiffuse);
+    }
     t += "}\n";
     return t;
 }
