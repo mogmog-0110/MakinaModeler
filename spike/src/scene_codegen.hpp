@@ -487,13 +487,13 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
 inline std::string generateShader(const makina::EvalProgram& prog,
                                   const std::string& shadingInclude, bool interpret = false) {
     std::ostringstream o;
-    o << "#include \"scene_prelude.hlsl\"\n";
-    // The smallest distance correction any leaf carries. The field is a lower bound scaled by
-    // it (a warp's 1/L, a non-uniform Scale's smallest axis), and ambient occlusion reads
-    // "field smaller than the step" as occlusion -- so a field shrunk everywhere by 1/L reads
-    // as fully occluded and the solid goes black (a 90 deg/unit twist did, at L = 5.3). The
-    // shading divides the field by this before comparing, which is exact for one correction
-    // and conservative for a mix. 1 for every scene without warps or non-uniform scales.
+    // The smallest distance correction any leaf carries, defined before the prelude so its
+    // fallback of 1 does not win. The field is a lower bound scaled by it (a warp's 1/L, a
+    // non-uniform Scale's smallest axis), and every "is the field smaller than this length"
+    // test in the shading -- occlusion, the shadow and mirror rays leaving the surface -- has
+    // to be made in the field's units, or a field shrunk by 1/L reads as solid shadow (a
+    // 90 deg/unit twist went black from occlusion, a bent bar under a POV light from shadow).
+    // Exact for one correction, conservative for a mix, 1 for every scene without warps.
     float minCorrection = 1.0f;
     for (const makina::EvalNode& n : prog.nodes) {
         if (n.op < static_cast<std::uint32_t>(makina::EvalOp::Union) &&
@@ -503,7 +503,8 @@ inline std::string generateShader(const makina::EvalProgram& prog,
             minCorrection = n.params[3];
         }
     }
-    o << "#define MK_MIN_CORRECTION " << detail::flt(minCorrection) << "\n\n";
+    o << "#define MK_MIN_CORRECTION " << detail::flt(minCorrection) << "\n";
+    o << "#include \"scene_prelude.hlsl\"\n\n";
     if (interpret) {
         // The program travels in a buffer instead of the source, so this shader is the same for
         // every scene and nothing needs compiling when the model changes.

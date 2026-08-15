@@ -734,7 +734,16 @@ int main(int argc, char** argv) {
                     else if (m == "ALT") scriptedMods |= makina::mods::kAlt;
                     else std::fprintf(stderr, "warning: --keys: unknown modifier '%s'\n", m.c_str());
                 }
-                in.keysPressed.push_back(k);
+                // A scripted "add.<op>" is a toolbar press, so it takes the toolbar's road:
+                // the pending-action branch below, which is where a button's dispatch lands.
+                // Every other action rides the key path, as the marker convention says.
+                if (k.rfind("@add.", 0) == 0) {
+                    std::lock_guard<std::mutex> lock(pendingMutex);
+                    pendingAction = k.substr(1);
+                    pendingPayload.clear();
+                } else {
+                    in.keysPressed.push_back(k);
+                }
             }
             if (window.consumeResize()) {
                 dev.resize(in.width, in.height);

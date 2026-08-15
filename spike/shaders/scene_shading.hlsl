@@ -12,12 +12,8 @@
 // After both, because the march needs calcNormal and the shader-wide constants.
 #include "scene_march.hlsl"
 
-// MK_MIN_CORRECTION comes from the generated header: the field is a lower bound shrunk by the
-// leaves' distance corrections, and occlusion compares it against the step taken, so the
-// comparison is made in the field's own units or a shrunk field reads as solid shadow.
-#ifndef MK_MIN_CORRECTION
-#define MK_MIN_CORRECTION 1.0
-#endif
+// Occlusion compares the field against the step taken, in the field's units
+// (MK_MIN_CORRECTION, scene_prelude.hlsl), or a shrunk field reads as solid shadow.
 float calcAO(float3 p, float3 n, float reach) {
     float occ = 0.0;
     float sca = 1.0;
@@ -164,10 +160,10 @@ float3 mkReflected(float3 p, float3 n, float3 rd, float eps, float normalEps) {
     const float3 dir = reflect(rd, n);
     // Started off the surface, or the first sample reads the surface itself and every mirror comes
     // back black -- the same self-hit the shadow march has to avoid.
-    float t = eps * 4.0;
+    float t = eps * 4.0 / MK_MIN_CORRECTION;
     for (uint s = 0u; s < gMaxSteps; ++s) {
         const float d = evalCsg(p + dir * t);
-        if (d < eps) {
+        if (d < eps * MK_MIN_CORRECTION) {
             const float3 q = p + dir * t;
             const float3 qn = calcNormal(q, normalEps);
             const float3 qs = evalCsgMaterial(q);

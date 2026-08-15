@@ -243,6 +243,21 @@ if errorlevel 1 (
     set FAILED=1
 )
 
+REM The three warps (D-14) reach the tree by the same add.<op> path the toolbar buttons take,
+REM here driven by name so the check does not depend on where a button was laid out. Each
+REM must land as a node the saved scene names by op -- a warp the core did not know would
+REM be refused by the command layer and never appear.
+echo    warps
+"%EXE%" "%SCENE%" --no-shell --actions "add.twist add.bend add.taper" --frames 60 --save "%OUT%\warps.json" ^
+    >"%OUT%\warps.log" 2>&1
+for %%w in (Twist Bend Taper) do (
+    findstr /C:"\"op\": \"%%w\"" "%OUT%\warps.json" >nul 2>&1
+    if errorlevel 1 (
+        echo       FAILED [warps]: add.%%w did not put a %%w in the tree
+        set FAILED=1
+    )
+)
+
 REM Isolate: only the selected subtree in the picture, and a way back.
 REM
 REM Three shots with the same selection. The base and the isolated one must differ (otherwise

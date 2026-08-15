@@ -12,6 +12,15 @@
 // one twist in two compilers rather than two twists that mostly agree.
 #include "Warp.hpp"
 
+// The smallest distance correction any leaf carries, from the generated header when the scene
+// has one. The field is a lower bound shrunk by it (a warp's 1/L, a non-uniform Scale's smallest
+// axis), so every test of the form "is the field smaller than this length" -- the shadow and
+// mirror rays leaving the surface, ambient occlusion -- has to be made in the field's units, or
+// a shrunk field reads as solid shadow: a bent bar came out black under a POV-matched light.
+#ifndef MK_MIN_CORRECTION
+#define MK_MIN_CORRECTION 1.0
+#endif
+
 cbuffer Params : register(b0) {
     float3 gEye;        float gTanHalfFov;
     float3 gForward;    float gAspect;

@@ -140,6 +140,20 @@ bool hasUnboundedPrimitive(const makina::Scene& s) {
     return false;
 }
 
+/// A domain warp (D-14) goes to POV as an isosurface, and POV shades an isosurface darker than
+/// the same shape as a primitive: spike/pov_iso_probe.py puts a box beside itself-as-isosurface
+/// under one light and reads 5-6/255 less on the isosurface, every face. So a warped scene is
+/// held to POV by outline (warp-silhouette-check.bat), where the two agree to 0.1 px, and not by
+/// pixel -- an oracle that disagrees with itself cannot judge the renderer.
+bool hasWarp(const makina::Scene& s) {
+    for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
+        if (makina::isWarp(static_cast<makina::Op>(s.nodes[i].op))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 
 /// Half the diagonal of a box, which is what every camera distance here is a multiple of.
 double radiusOf(const makina::Aabb& box) {
@@ -443,6 +457,10 @@ int main(int argc, char** argv) {
                     // silhouette of an unbounded solid is not a thing the two can agree on.
                     std::printf("    no .pov: the scene has unbounded geometry, whose silhouette "
                                 "depends on the far plane\n");
+                } else if (writePov && povMatch && hasWarp(scene)) {
+                    std::printf("    no .pov: the scene holds a warp; POV shades an isosurface "
+                                "darker than a primitive (pov_iso_probe.py), so it is held by "
+                                "outline only\n");
                 } else if (writePov) {
                     const FrameParams fp = frameScene(bounds.box, width, height, maxSteps);
                     makina::PovOptions po;

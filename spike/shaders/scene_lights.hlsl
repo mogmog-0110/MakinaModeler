@@ -36,10 +36,12 @@ float mkShadow(float3 p, float3 toLight, float distance, float softness, float e
         return 1.0;
     }
     float shade = 1.0;
-    float t = eps * 4.0;
+    // Off the surface by four eps in world units: the field there reads about that times the
+    // correction, so the blocked test below is made in the same units (scene_prelude.hlsl).
+    float t = eps * 4.0 / MK_MIN_CORRECTION;
     for (uint i = 0u; i < 64u; ++i) {
         const float d = evalCsg(p + toLight * t);
-        if (d < eps) {
+        if (d < eps * MK_MIN_CORRECTION) {
             return 0.0;   // fully blocked; nothing softer can come of marching further
         }
         if (softness > 0.0) {
