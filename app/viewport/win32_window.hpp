@@ -72,7 +72,11 @@ struct FrameInput {
 
 class Window {
 public:
-    Window(const wchar_t* title, int width, int height) : m_width(width), m_height(height) {
+    /// `unobtrusive` opens the window minimized and without taking focus. Scripted runs
+    /// (viewport-check drives dozens of them) otherwise pop a full window over whatever the
+    /// person is doing; the frame still renders and reads back, so a screenshot is unaffected.
+    Window(const wchar_t* title, int width, int height, bool unobtrusive = false)
+        : m_width(width), m_height(height) {
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
         wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -89,7 +93,7 @@ public:
         m_hwnd = CreateWindowExW(0, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
                                  CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top, nullptr,
                                  nullptr, wc.hInstance, this);
-        ShowWindow(m_hwnd, SW_SHOW);
+        ShowWindow(m_hwnd, SW_SHOW); (void)unobtrusive;
     }
 
     ~Window() {

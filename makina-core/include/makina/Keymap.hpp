@@ -97,6 +97,10 @@ inline const std::vector<std::string>& knownActions() {
         // Dragging a row onto another in the outliner. No key can express it, so no
         // preset binds it; the shell rows carry it and keymap_audit counts them.
         "edit.reparent",
+        // Folding a subtree in the outliner, the way a JTree's handle does. Like edit.reparent
+        // it is a row's control and no key names it; the fold is how the tree is looked at,
+        // not what it is, so it lives with the viewport and never touches the scene.
+        "tree.toggle",
         "edit.undo",       "edit.redo",
         "axis.x",          "axis.y",           "axis.z",
         "snap.hold",

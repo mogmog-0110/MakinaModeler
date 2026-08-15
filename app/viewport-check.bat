@@ -195,10 +195,10 @@ REM travels from C++ to the page. This is the other direction: clicking a row ha
 REM node, and it cannot go through the viewport's own select.pick, which means "whatever is under
 REM the cursor" and would fire a ray from a cursor sitting on the panel.
 REM
-REM Node 13 goes in selected and (100,245) is the row for node 11, so a passing run is one where
+REM Node 13 goes in selected and (100,289) is the row for node 11, so a passing run is one where
 REM the selection moved from one to the other rather than merely changing.
 echo    outliner
-"%EXE%" "%SCENE%" --select "13" --frames 150 --click "100,245" ^
+"%EXE%" "%SCENE%" --select "13" --frames 150 --click "100,289" ^
     --dump-state "%OUT%\rowpick.json" >"%OUT%\rowpick.log" 2>&1
 call :inFile rowpick "id.:11,[^{]*selected.:true" "clicking a row has to select that node"
 call :inFile rowpick "id.:13,[^{]*selected.:false" "and has to let go of the one before it"
@@ -231,11 +231,11 @@ call :present added 88 "the toolbar has to be able to add a shape"
 
 REM A row dragged onto another, all the way to the tree. The pointer path is the same one
 REM --click takes; what this adds is the binder-side drag (grab, 4px threshold, drop) and
-REM the edit.reparent dispatch. (100,245) is the row for node 11 and (100,105) resolved to
+REM the edit.reparent dispatch. (100,289) is the row for node 11 and (100,113) resolved to
 REM node 3 by measurement; the parent assertion pins the reparent, because a byte
 REM difference alone would also pass on any stray edit.
 echo    reparent
-"%EXE%" "%SCENE%" --frames 200 --dragui "100,245,100,105" --save "%OUT%\reparent.json" >"%OUT%\reparent.log" 2>&1
+"%EXE%" "%SCENE%" --frames 200 --dragui "100,289,100,113" --save "%OUT%\reparent.json" >"%OUT%\reparent.log" 2>&1
 call :differs reparent "dragging a row onto another must change the tree"
 python "%HERE%parent_of.py" "%OUT%\reparent.json" 11 3
 if errorlevel 1 (
@@ -256,6 +256,19 @@ for %%w in (Twist Bend Taper) do (
         echo       FAILED [warps]: add.%%w did not put a %%w in the tree
         set FAILED=1
     )
+)
+
+REM Folding a subtree with the handle beside its row (tree.toggle). (22,113) is the handle of
+REM node 3, a Merge with children; after the click its descendants must leave the published
+REM rows and node 3 itself must stay, marked collapsed. Reading the state rather than a
+REM picture, because what is folded is a fact about the rows, not about pixels.
+echo    fold
+"%EXE%" "%SCENE%" --frames 150 --click "22,113" --dump-state "%OUT%\fold.json" >"%OUT%\fold.log" 2>&1
+call :inFile fold "id.:3,[^{]*collapsed.:true" "clicking the handle has to fold node 3"
+findstr /R /C:"id.:4," "%OUT%\fold.json" >nul 2>&1
+if not errorlevel 1 (
+    echo       FAILED [fold]: node 4 is under node 3 and must leave the rows when 3 folds
+    set FAILED=1
 )
 
 REM Isolate: only the selected subtree in the picture, and a way back.

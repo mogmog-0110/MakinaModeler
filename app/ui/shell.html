@@ -119,12 +119,29 @@
     font-size: 11px; font-weight: 600; color: var(--ink-dim);
     background: var(--bar); border-bottom: 1px solid var(--line);
   }
+  /* Sized after Grasp3D's JTree: a 16 pt sans-serif cell renderer on a ~22 px row, with a
+     fold handle in front of every branch. Smaller than that read as "hard to see" next to it. */
   .node {
-    display: flex; align-items: center; gap: 5px;
-    padding: 2px 8px; cursor: default; white-space: nowrap;
+    display: flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 8px 0 4px; cursor: default; white-space: nowrap;
+    font-size: 15px;
   }
   .node:hover { background: #e7ebf3; }
   .node.is-selected { background: var(--sel-soft); }
+  /* The fold handle: a fixed-width cell so labels line up whether or not a row has children.
+     It is its own action target beside the label's, not inside it, so a click on the handle
+     folds and does not also pick -- the binder wires clicks per element and lets them bubble. */
+  .node .handle {
+    width: 14px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-dim); font-size: 11px; cursor: pointer; user-select: none; flex: none;
+  }
+  .node .handle.is-leaf { visibility: hidden; }
+  .node .label { display: inline-flex; align-items: center; gap: 6px; flex: 1; height: 22px; }
+  /* Depth is drawn as a thin guide line per level, like a JTree's connecting lines. */
+  .node .guide {
+    display: inline-block; height: 22px; width: 12px; flex: none;
+    border-left: 1px dotted #b8bfcc; margin-left: 5px;
+  }
   /* ミュートは削除ではない。木には残り、立体から出ているだけなので、消さずに薄くする。 */
   .node.is-muted { opacity: .45; font-style: italic; }
   /* ドラッグ中の行と、落ち先の行。Grasp3D の DnDTree も落ち先を強調していた。 */
@@ -252,9 +269,13 @@
              data-m-action="select.pick" data-m-arg="id"
              data-m-drag="id" data-m-drop="edit.reparent"
              data-m-style="padding-left: {indent}px">
-          <img data-m-attr="src: assets/icons/{icon}" alt="">
-          <span data-m-text="name"></span>
-          <span class="op" data-m-text="op"></span>
+          <span class="handle" data-m-class="is-leaf: !hasChildren"
+                data-m-action="tree.toggle" data-m-arg="id"><span data-m-show="collapsed">&#9656;</span><span data-m-hide="collapsed">&#9662;</span></span>
+          <span class="label">
+            <img data-m-attr="src: assets/icons/{icon}" alt="">
+            <span data-m-text="name"></span>
+            <span class="op" data-m-text="op"></span>
+          </span>
         </div>
       </template>
     </div>

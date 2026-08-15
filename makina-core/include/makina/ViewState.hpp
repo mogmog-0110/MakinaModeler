@@ -57,7 +57,8 @@ inline const std::vector<std::string>& publishedKeys() {
 inline const std::vector<std::pair<std::string, std::vector<std::string>>>&
 publishedItemFields() {
     static const std::vector<std::pair<std::string, std::vector<std::string>>> kFields = {
-        {"view.tree", {"id", "name", "op", "icon", "indent", "selected", "muted"}},
+        {"view.tree", {"id", "name", "op", "icon", "indent", "selected", "muted", "hasChildren",
+                       "collapsed"}},
         {"view.selection.fields", {"key", "label", "value"}},
     };
     return kFields;
@@ -146,51 +147,85 @@ inline const char* iconFor(Op op) {
 /// A key and the string that goes with it. Ordered as `publishedKeys()` lists them.
 using ViewEntries = std::vector<std::pair<std::string, std::string>>;
 
-/// The outliner: one row per node, in the order the tree stores them.
+/// The outliner: one row per node, in the order the tree reads.
 ///
-/// Pre-order, which for this array is simply index order -- Flatten.hpp keeps a node's children
-/// contiguous and after it -- so the rows read down the page the way the tree reads. `indent` is
-/// the depth in pixels rather than a level, because the page has to multiply it by something and
+/// A depth-first walk from the root, children under their parent, which is how a JTree lays a
+/// tree out and how a person expects to read one. This used to walk the array in index order on
+/// the belief that the array was pre-order; it is not -- Edit.hpp keeps a node's children
+/// contiguous, but a node's siblings come before its children, so a Merge's three siblings sat
+/// between it and its first child and the outliner read as a list with indents that meant
+/// nothing. That was most of what "the tree is hard to read" turned out to be. `indent` is the
+/// depth in pixels rather than a level, because the page has to multiply it by something and
 /// doing that in CSS would need a custom property per row.
 ///
 /// `selected` is membership in the raw selection, not in `topLevel`: the user picked those nodes
 /// and expects to see them lit. `topLevel` is about which ones an *edit* reaches, and showing that
 /// distinction as a highlight would explain the rule at exactly the wrong moment.
-[[nodiscard]] inline std::string treeJson(const Scene& s, const Selection& selection) {
+///
+/// `collapsed` is the ids whose children are folded away, the way a JTree folds: a folded node
+/// still shows, its whole subtree does not. Held by the viewport (not the scene -- it is how the
+/// user is looking, not what the model is), and passed in so a headless check can fold a node
+/// and read the rows that result. `hasChildren` is what the page draws a handle for.
+using Collapsed = std::vector<std::uint32_t>;
+
+namespace detail {
+
+inline void treeRow(const Scene& s, std::uint16_t index, int depth, const Selection& selection,
+                    const Collapsed& collapsed, std::string& out, bool& first) {
+    const CsgNode& n = s.nodes[index];
+    const Op op = static_cast<Op>(n.op);
+
+    bool picked = false;
+    for (const std::uint32_t id : selection) {
+        if (id == n.id) {
+            picked = true;
+        }
+    }
+    bool folded = false;
+    for (const std::uint32_t c : collapsed) {
+        if (c == n.id) {
+            folded = true;
+        }
+    }
+
+    // A node with no name of its own shows its op, and then the second column has nothing
+    // left to add -- a row reading "Translate  Translate" is the outliner explaining itself
+    // twice. The field stays in the schema and simply carries nothing.
+    const std::string name = s.nameOf(n);
+    const std::string shown = name.empty() ? opName(op) : name;
+    if (!first) {
+        out += ",";
+    }
+    first = false;
+    out += "{\"id\":" + std::to_string(n.id);
+    out += ",\"name\":" + jsonQuote(shown);
+    out += ",\"op\":" + jsonQuote(shown == opName(op) ? "" : opName(op));
+    out += ",\"icon\":" + jsonQuote(iconFor(op));
+    out += ",\"indent\":" + std::to_string(depth * 12);
+    out += ",\"selected\":" + std::string(picked ? "true" : "false");
+    out += ",\"muted\":" +
+           std::string((n.flags & flags::kMuted) != 0 ? "true" : "false");
+    out += ",\"hasChildren\":" + std::string(n.childCount > 0 ? "true" : "false");
+    out += ",\"collapsed\":" + std::string(folded ? "true" : "false");
+    out += "}";
+
+    if (folded || depth >= 64) {
+        return;
+    }
+    for (std::uint16_t i = 0; i < n.childCount; ++i) {
+        treeRow(s, static_cast<std::uint16_t>(n.firstChild + i), depth + 1, selection, collapsed,
+                out, first);
+    }
+}
+
+}  // namespace detail
+
+[[nodiscard]] inline std::string treeJson(const Scene& s, const Selection& selection,
+                                          const Collapsed& collapsed = {}) {
     std::string out = "[";
-    for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
-        const CsgNode& n = s.nodes[i];
-        const Op op = static_cast<Op>(n.op);
-
-        int depth = 0;
-        for (std::uint16_t p = n.parent; p != kNoParent && depth < 64; p = s.nodes[p].parent) {
-            ++depth;
-        }
-
-        bool picked = false;
-        for (const std::uint32_t id : selection) {
-            if (id == n.id) {
-                picked = true;
-            }
-        }
-
-        // A node with no name of its own shows its op, and then the second column has nothing
-        // left to add -- a row reading "Translate  Translate" is the outliner explaining itself
-        // twice. The field stays in the schema and simply carries nothing.
-        const std::string name = s.nameOf(n);
-        const std::string shown = name.empty() ? opName(op) : name;
-        if (i != 0) {
-            out += ",";
-        }
-        out += "{\"id\":" + std::to_string(n.id);
-        out += ",\"name\":" + detail::jsonQuote(shown);
-        out += ",\"op\":" + detail::jsonQuote(shown == opName(op) ? "" : opName(op));
-        out += ",\"icon\":" + detail::jsonQuote(detail::iconFor(op));
-        out += ",\"indent\":" + std::to_string(depth * 12);
-        out += ",\"selected\":" + std::string(picked ? "true" : "false");
-        out += ",\"muted\":" +
-               std::string((n.flags & flags::kMuted) != 0 ? "true" : "false");
-        out += "}";
+    bool first = true;
+    if (s.nodes.count > 0) {
+        detail::treeRow(s, 0, 0, selection, collapsed, out, first);
     }
     return out + "]";
 }
@@ -230,7 +265,8 @@ using ViewEntries = std::vector<std::pair<std::string, std::string>>;
 
 /// Everything the shell reads, for one frame.
 [[nodiscard]] inline ViewEntries viewState(const Scene& s, const Selection& selection,
-                                           const ViewNumbers& numbers) {
+                                           const ViewNumbers& numbers,
+                                           const Collapsed& collapsed = {}) {
     std::string title = "プロパティ";
     std::string picked = "nothing selected";
     if (!selection.empty()) {
@@ -246,7 +282,7 @@ using ViewEntries = std::vector<std::pair<std::string, std::string>>;
     }
 
     ViewEntries out;
-    out.emplace_back("view.tree", treeJson(s, selection));
+    out.emplace_back("view.tree", treeJson(s, selection, collapsed));
     out.emplace_back("view.selection.title", title);
     out.emplace_back("view.selection.fields", fieldsJson(s, selection));
     out.emplace_back("view.status.nodes", std::to_string(s.nodes.count) + " nodes");

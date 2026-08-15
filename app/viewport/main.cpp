@@ -442,7 +442,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        app::Window window(L"Makina viewport", 1280, 720);
+        // A scripted run (--frames) is a check, not a session: it stays out of the way.
+        app::Window window(L"Makina viewport", 1280, 720, frameLimit > 0);
         app::SwapchainDevice dev(window.handle(), 1280, 720);
         std::wprintf(L"adapter    : %ls\n", dev.adapterName().c_str());
         std::printf("keymap     : %s\n", keymap.name().c_str());
@@ -681,6 +682,9 @@ int main(int argc, char** argv) {
         // A list, not an id, and every edit goes through topLevel() so a solid inside another
         // selected solid is reached once rather than twice.
         makina::Selection selection = scriptedSelection;
+        // Which subtrees the outliner has folded away. How the user is looking at the tree, so
+        // it lives here beside the selection and never enters the scene or its history.
+        makina::Collapsed collapsed;
         // A rectangle in progress. Screen coordinates, because that is what the drag is in and
         // converting to world here would have to be undone to test against the film.
         bool   boxing = false;
@@ -824,6 +828,27 @@ int main(int argc, char** argv) {
                     // and where; the command layer's `move` does the rest, including refusing a
                     // node dropped into its own subtree -- the page does not know the tree well
                     // enough to be trusted with that rule, so it is not asked to enforce it.
+                    // The handle beside a row: fold or unfold that subtree.
+                    if (!handled && pendingAction == "tree.toggle" && !pendingPayload.empty()) {
+                        const std::uint32_t id =
+                            static_cast<std::uint32_t>(std::atoi(pendingPayload.c_str()));
+                        if (id != 0) {
+                            bool removed = false;
+                            for (std::size_t k = 0; k < collapsed.size(); ++k) {
+                                if (collapsed[k] == id) {
+                                    collapsed.erase(collapsed.begin() +
+                                                    static_cast<std::ptrdiff_t>(k));
+                                    removed = true;
+                                    break;
+                                }
+                            }
+                            if (!removed) {
+                                collapsed.push_back(id);
+                            }
+                            std::printf("%s subtree %u\n", removed ? "unfolded" : "folded", id);
+                        }
+                        handled = true;
+                    }
                     if (!handled && pendingAction == "edit.reparent") {
                         nlohmann::json parsed = nlohmann::json::parse(pendingPayload, nullptr,
                                                                       false);
@@ -1492,7 +1517,7 @@ int main(int argc, char** argv) {
                 numbers.distance = camera.distance;
                 numbers.frameMs = lastFrameMs;
                 numbers.live = transform.active() ? transform.status() : std::string();
-                shell.publish(makina::viewState(history.current(), selection, numbers));
+                shell.publish(makina::viewState(history.current(), selection, numbers, collapsed));
             }
 
             dev.end();
@@ -1521,7 +1546,7 @@ int main(int argc, char** argv) {
             } else {
                 out << "{";
                 bool first = true;
-                for (const auto& kv : makina::viewState(history.current(), selection, numbers)) {
+                for (const auto& kv : makina::viewState(history.current(), selection, numbers, collapsed)) {
                     out << (first ? "" : ",") << "\n  " << makina::detail::jsonQuote(kv.first)
                         << ": ";
                     // A list is already JSON and goes in as it is; anything else is a string.
