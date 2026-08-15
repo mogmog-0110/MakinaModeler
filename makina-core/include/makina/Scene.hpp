@@ -62,8 +62,17 @@ struct Material {
     /// field existed says nothing about it, so reading an unset value as "no bending" is what keeps
     /// those scenes rendering as they did. POV does not accept an index below one either.
     float ior;
+    /// POV's finish{brilliance}: an exponent on N.L in the diffuse term. One is POV's default and
+    /// plain Lambert; pingu.pov's 0.9 flattens the falloff a little.
+    ///
+    /// Zero means "unset" and reads as one, the same rule as ior: a Scene is zero-filled and no
+    /// file written before this field existed says anything about it, so those scenes keep
+    /// rendering as they did. POV itself would take 0 as a constant diffuse, but no exporter here
+    /// writes that and no fixture wants it -- the ambiguity is resolved in favour of every scene
+    /// that already exists.
+    float brilliance;
 };
-static_assert(sizeof(Material) == 44);
+static_assert(sizeof(Material) == 48, "Material grew for brilliance; JSON reads older files as-is");
 static_assert(std::is_trivially_copyable_v<Material>);
 
 /// What a POV-Ray pigment pattern is, as far as this renderer goes.

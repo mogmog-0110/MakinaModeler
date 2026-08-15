@@ -813,23 +813,24 @@
     {
       "id": 0,
       "diffuse": [
-        255,
-        255,
-        255
+        306,
+        306,
+        306
       ],
       "alpha": 1.0,
       "ambient": 0.0,
       "specular": 0.18000000715255737,
       "shininess": 116.4800033569336,
       "emission": 0.0,
-      "texture": null
+      "texture": null,
+      "brilliance": 0.8999999761581421
     },
     {
       "id": 1,
       "diffuse": [
-        238,
-        232,
-        222
+        278,
+        271,
+        258
       ],
       "alpha": 1.0,
       "ambient": 0.0,
@@ -841,9 +842,9 @@
     {
       "id": 2,
       "diffuse": [
-        1,
-        1,
-        1
+        0,
+        0,
+        0
       ],
       "alpha": 1.0,
       "ambient": 0.0,

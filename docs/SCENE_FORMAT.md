@@ -74,6 +74,12 @@ Grasp3D の `.gsf` へ書き戻す経路は**作らない**。
       "shininess": 1.0,
       "emission": 0.0,
       "texture": null                     // テクスチャ名 or null
+      // 以下は POV 由来の任意項。既定値のときは書かない（古いファイルがそのまま往復するため）:
+      //   "reflection": 0.3            POV finish{reflection}。既定 0
+      //   "ior": 1.5                   POV interior{ior}。既定 1
+      //   "brilliance": 0.9            POV finish{brilliance}: 拡散項の N·L の指数。既定 1
+      //                                （POV に吐かせて cos^b と 4 桁一致、spike/pov_brilliance_probe.py）
+      //   "pigment": {...}             §3 参照
     }
   ]
 }

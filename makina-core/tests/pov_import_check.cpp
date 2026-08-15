@@ -816,6 +816,52 @@ void finishDiffuse() {
           "finish diffuse 0");
 }
 
+/// finish{brilliance}: read, kept through both round trips, and absent from a file that never
+/// said it. Not folded like diffuse -- it is an exponent, and no algebra on the pigment reproduces
+/// pow(N.L, b) -- so it earned Material a field.
+void finishBrilliance() {
+    std::printf("finish brilliance reaches the material and both files\n");
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere{<0,0,0>,1 pigment{color rgb <0.5,0.5,0.5>} "
+            "finish{specular 0.18 roughness 0.09 brilliance 0.9}}");
+        check(r.unsupported.empty(), "brilliance should read whole");
+        check(r.scene.materials.count == 1, "one material expected");
+        check(std::fabs(r.scene.materials[0].brilliance - 0.9f) < 1e-6f, "brilliance was lost");
+        check(makina::toGpuMaterial(r.scene.materials[0]).brilliance == 0.9f,
+              "brilliance should reach the shader material");
+
+        makina::PovOptions opt;
+        const std::string pov = makina::writePov(r.scene, opt);
+        check(pov.find(" brilliance ") != std::string::npos, "the exporter should write it");
+        const makina::PovImportResult back = makina::importPov(pov);
+        check(std::fabs(back.scene.materials[0].brilliance - 0.9f) < 1e-6f,
+              "brilliance should survive the POV round trip");
+
+        const makina::Scene viaJson = makina::parseScene(makina::writeScene(r.scene));
+        check(std::fabs(viaJson.materials[0].brilliance - 0.9f) < 1e-6f,
+              "brilliance should survive the JSON round trip");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("brilliance was refused: ") + e.what());
+    }
+
+    // Unset stays unset in every file: an older scene must not gain a line it never had, and the
+    // shader must read the zero as POV's default of one.
+    try {
+        const makina::PovImportResult r = makina::importPov("sphere{<0,0,0>,1 pigment{color rgb 1}}");
+        check(r.scene.materials[0].brilliance == 0.0f, "an unset brilliance should stay zero");
+        check(makina::toGpuMaterial(r.scene.materials[0]).brilliance == 1.0f,
+              "an unset brilliance should shade as POV's default one");
+        makina::PovOptions opt;
+        check(makina::writePov(r.scene, opt).find("brilliance") == std::string::npos,
+              "the exporter should not write an unset brilliance");
+        check(makina::writeScene(r.scene).find("brilliance") == std::string::npos,
+              "the JSON should not carry an unset brilliance");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the plain sphere was refused: ") + e.what());
+    }
+}
+
 /// #include: followed when the import knows a directory, named when it does not.
 void includeFollows() {
     std::printf("#include splices the named file\n");
@@ -918,6 +964,7 @@ int main(int argc, char** argv) {
         sorImport();
         sweepImport();
         finishDiffuse();
+        finishBrilliance();
         randStream();
         includeFollows();
         srgbDecode();

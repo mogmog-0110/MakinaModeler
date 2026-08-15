@@ -227,6 +227,10 @@ inline std::string povMaterial(const Scene& s, const CsgNode& n, bool silhouette
         // -- which is what keeps the 7,812-check comparison against the Java reference meaningful.
         t += " reflection " + num(m.reflection);
     }
+    if (m.brilliance != 0.0f && m.brilliance != 1.0f) {
+        // One is POV's own default, so writing it would only change the file, not the picture.
+        t += " brilliance " + num(m.brilliance);
+    }
     t += "}\n";
     return t;
 }

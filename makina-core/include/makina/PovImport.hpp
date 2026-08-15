@@ -1142,6 +1142,10 @@ private:
                 a.finishDiffuse = number();
                 continue;
             }
+            if (w == "brilliance") {
+                m.brilliance = static_cast<float>(number());
+                continue;
+            }
             if (m_textures.count(w) > 0) {
                 a = m_textures[w];
                 continue;
