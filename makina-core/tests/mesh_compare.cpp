@@ -192,14 +192,16 @@ void exercise(const std::string& path) {
         std::printf("    holds a Plane, which has no solid form; the outside check does not "
                     "apply (worst %.5f)\n", worstOutside);
     }
-    // A warp (D-14) is not something the BSP tessellator can follow yet: it is affine-only, so
-    // the mesh comes out unwarped while the field is warped. Named here rather than tolerated;
-    // the plan is to warp the vertices on the way out and measure again.
+    // A warp (D-14) is followed: the tessellator builds the children unwarped, slices them
+    // along the axis, and carries the vertices through the forward map. Sliced every 15
+    // degrees of turn the meshes land at 0.004 (twist), 0.005 (bend) and 0.0001 (taper)
+    // outside, against an allowance of 0.029 -- unsliced, the bend was 0.163. So a warped
+    // scene is held to the same check as any other; hasWarp only names it in the log.
     if (hasWarp) {
-        std::printf("    holds a warp, which the tessellator does not follow yet; the outside "
-                    "check does not apply (worst %.5f)\n", worstOutside);
+        std::printf("    holds a warp: the mesh is sliced along the axis and carried through the "
+                    "forward map (worst %.5f)\n", worstOutside);
     }
-    check(hasPlane || hasWarp || worstOutside <= outsideAllowance,
+    check(hasPlane || worstOutside <= outsideAllowance,
           "a triangle centre is " + std::to_string(worstOutside) +
               " outside the solid, past the " + std::to_string(outsideAllowance) +
               " a 24-segment cut can leave behind; the mesh has surface the field does not");
@@ -226,6 +228,13 @@ void exercise(const std::string& path) {
         // The sagitta again: a tessellated sphere's facets fall short of its true extent.
         // Three times the sagitta rather than two: verify_transforms scales a sphere non-uniformly,
         // so its facets fall short by more than a unit sphere's would. Measured at 0.0246.
+        // A warp's box is its guard cylinder, 1.5 times the children (Bounds.hpp): a culling
+        // bound, not the solid's extent, so the mesh cannot be asked to reach it. The outside
+        // check above still holds the warped mesh to the field; only this reach check steps
+        // aside, and says so.
+        if (hasWarp) {
+            std::printf("    reach not compared: a warp's bounds are its guard, not its extent\n");
+        }
         check(hasWarp || worstExtent <= radius * kSagitta * 3.0,
               "the mesh reaches " + std::to_string(worstExtent / radius) +
                   " of the scene radius short of, or past, the bounds the tree says the solid has");

@@ -16,12 +16,15 @@
 
 #include "Bounds.hpp"
 #include "Bsp.hpp"
+#include "Eval.hpp"
+#include "Warp.hpp"
 #include "Fidelity.hpp"
 #include "Op.hpp"
 #include "Scene.hpp"
 #include "Surface.hpp"
 #include "Tessellate.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -42,6 +45,10 @@ struct TessellationResult {
 };
 
 namespace detail {
+
+/// How much a warp may turn (or shear, for a taper) within one slab of its mesh before the
+/// slab is cut again: 15 degrees, the same grain kSegments gives a circle.
+constexpr double kWarpSliceDegrees = 15.0;
 
 void collectSolids(const Scene& s, std::uint16_t index, const Mat4& m, TessellationResult& r,
                    Fidelity f);
@@ -145,6 +152,102 @@ inline void collectSolids(const Scene& s, std::uint16_t index, const Mat4& m,
     }
 
     if (!f.labelsAreGeometry && op == Op::Label) {
+        return;
+    }
+
+    if (isWarp(op)) {
+        // The children are built in the warp's own space (identity), booleans and all, and every
+        // vertex is then carried through the forward map and out through the parent's matrix
+        // (D-14). Faces bend where they should only as far as their vertices go: a box's side
+        // stays one quad with four twisted corners, so the mesh under a strong warp is a coarse
+        // stand-in, and mesh_compare measures how coarse rather than assuming.
+        TessellationResult sub;
+        for (std::uint16_t i = 0; i < n.childCount; ++i) {
+            collectSolids(s, static_cast<std::uint16_t>(n.firstChild + i), identityMat(), sub, f);
+        }
+        if (!sub.complete) {
+            r.complete = false;
+            if (r.missing.empty()) {
+                r.missing = sub.missing;
+            }
+        }
+        const WarpExtent e = warpExtent(s, index, f);
+        const int kind = warpKindOf(op);
+        const int axis = n.flags & flags::kAxisMask;
+        const double rate = warpRateOf(n);
+        const double H = e.valid ? e.H / kWarpGuardMargin : 0.0;
+
+        // Slice along the axis before warping, so a face that should curve is a chain of short
+        // facets rather than one long chord: a bent bar's side came out 0.163 outside the field
+        // against an allowance of 0.029 (the sagitta of a 2-unit chord on a 1.15 radius arc)
+        // when it was one quad. Slabs every kWarpSliceDegrees of turn, the same grain as
+        // kSegments gives a circle; a taper turns nothing but still shears, so it gets slabs
+        // by the same rule read as "per unit of rate * length".
+        const double turn = std::fabs(rate) * 2.0 * H;
+        const int slabs = std::max(1, std::min(64, static_cast<int>(std::ceil(
+            turn / (kWarpSliceDegrees * kPi / 180.0)))));
+        if (slabs > 1 && !sub.solids.empty()) {
+            std::vector<BspSolid> sliced;
+            const double R = e.valid ? e.R : 1.0;
+            for (int i = 0; i < slabs; ++i) {
+                const double a0 = -H + 2.0 * H * i / slabs;
+                const double a1 = -H + 2.0 * H * (i + 1) / slabs;
+                CsgNode slab{};
+                slab.op = static_cast<std::uint8_t>(Op::Box);
+                // Loose across the section, exact along the axis; the first and last slabs
+                // reach past the ends so the frozen extension is not cut off.
+                const double lo = i == 0 ? -1e3 : a0;
+                const double hi = i == slabs - 1 ? 1e3 : a1;
+                slab.params[0] = -R * 4.0; slab.params[1] = -R * 4.0; slab.params[2] = -R * 4.0;
+                slab.params[3] = R * 4.0;  slab.params[4] = R * 4.0;  slab.params[5] = R * 4.0;
+                slab.params[axis] = lo;
+                slab.params[axis + 3] = hi;
+                BspSolid box;
+                if (!tessellatePrimitive(slab, index, identityMat(), box)) {
+                    continue;
+                }
+                for (const BspSolid& solid : sub.solids) {
+                    BspSolid piece = bspIntersect(solid, box);
+                    if (!piece.empty()) {
+                        sliced.push_back(std::move(piece));
+                    }
+                }
+            }
+            sub.solids = std::move(sliced);
+        }
+        for (BspSolid& solid : sub.solids) {
+            // Triangles before the map: a quad whose four corners turn by four different angles
+            // is no longer flat, and a BSP that reads its plane from three of the corners then
+            // classifies points against a face the fourth corner has left -- twist alone came
+            // out 4% wrong in bsp_compare while bend and taper, whose quads stay nearly flat,
+            // agreed. Every polygon is fanned into triangles, which are flat by construction.
+            BspSolid tris;
+            for (const BspPoly& poly : solid) {
+                for (std::size_t k = 2; k < poly.v.size(); ++k) {
+                    BspPoly t;
+                    t.shared = poly.shared;
+                    t.v = {poly.v[0], poly.v[k - 1], poly.v[k]};
+                    tris.push_back(std::move(t));
+                }
+            }
+            solid = std::move(tris);
+            for (BspPoly& poly : solid) {
+                for (BspVertex& v : poly.v) {
+                    double w[3];
+                    mkWarpFwd(kind, axis, rate, H, v.p[0], v.p[1], v.p[2], w[0], w[1], w[2]);
+                    applyMat(m, w, v.p);
+                }
+                // The plane and the vertex normals from the moved corners: a warp is not a
+                // rotation, so the old normals do not carry.
+                poly.computePlane();
+                for (BspVertex& v : poly.v) {
+                    v.n[0] = poly.nx;
+                    v.n[1] = poly.ny;
+                    v.n[2] = poly.nz;
+                }
+            }
+            r.solids.push_back(std::move(solid));
+        }
         return;
     }
 

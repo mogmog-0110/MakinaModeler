@@ -109,6 +109,50 @@ MK_FN void mkTaperInv(MK_FLOAT rate, MK_FLOAT a, MK_FLOAT u, MK_FLOAT v,
     outV = v / s;
 }
 
+/// The forward map: where a point of the unwarped children ends up. Only the mesh writer needs
+/// it (D-14: the B-rep is built unwarped and its vertices are carried through). Frozen beyond
+/// H exactly as the inverse is, so the two are inverses of each other everywhere.
+MK_FN void mkWarpFwd(int kind, int axis, MK_FLOAT rate, MK_FLOAT H,
+                     MK_FLOAT x, MK_FLOAT y, MK_FLOAT z,
+                     MK_OUT ox, MK_OUT oy, MK_OUT oz) {
+    MK_FLOAT a, u, v;
+    if (axis == 0)      { a = x; u = y; v = z; }
+    else if (axis == 1) { a = y; u = z; v = x; }
+    else                { a = z; u = x; v = y; }
+    MK_FLOAT ac = mkClamp(a, -H, H);
+    MK_FLOAT over = a - ac;
+    MK_FLOAT ra, ru, rv;
+    if (kind == MK_WARP_TWIST) {
+        MK_FLOAT th = rate * ac;
+        MK_FLOAT c = MK_COS(th);
+        MK_FLOAT s = MK_SIN(th);
+        ra = a;
+        ru = c * u - s * v;
+        rv = s * u + c * v;
+    } else if (kind == MK_WARP_TAPER) {
+        MK_FLOAT sc = 1.0 + rate * ac;
+        ra = a;
+        ru = u * sc;
+        rv = v * sc;
+    } else if (MK_ABS(rate) < 1.0e-9) {
+        ra = a; ru = u; rv = v;
+    } else {
+        // Bend: the axis coordinate becomes arc length about the centre at u = c; past the
+        // frozen end the overshoot continues along the end's tangent.
+        MK_FLOAT c = 1.0 / rate;
+        MK_FLOAT phi = ac * rate;
+        MK_FLOAT rr = c - u;
+        MK_FLOAT sn = MK_SIN(phi);
+        MK_FLOAT cs = MK_COS(phi);
+        ra = rr * sn + over * cs;
+        ru = c - rr * cs + over * sn;
+        rv = v;
+    }
+    if (axis == 0)      { ox = ra; oy = ru; oz = rv; }
+    else if (axis == 1) { oy = ra; oz = ru; ox = rv; }
+    else                { oz = ra; ox = ru; oy = rv; }
+}
+
 /// Dispatch by kind. `axis` is 0/1/2 for X/Y/Z, the same encoding as flags::kAxis*. `H` is how
 /// far along the axis the children reach; beyond it the warp is frozen at the end section.
 ///

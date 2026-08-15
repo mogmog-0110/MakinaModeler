@@ -195,6 +195,36 @@ void programAgrees() {
     }
 }
 
+/// The forward map undoes the inverse everywhere the mesh writer will use it, frozen ends
+/// included -- a vertex sent out and read back has to land where it started.
+void forwardUndoesInverse() {
+    std::printf("the forward map undoes the inverse, frozen ends included\n");
+    const int kinds[3] = {MK_WARP_TWIST, MK_WARP_BEND, MK_WARP_TAPER};
+    const double rates[3] = {1.2, 0.9, 0.5};
+    double worst = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        for (int axis = 0; axis < 3; ++axis) {
+            for (int i = 0; i < 27; ++i) {
+                // Inside the reach and past it, so the frozen band is exercised.
+                const double p[3] = {-1.6 + 1.6 * (i % 3), -1.6 + 1.6 * ((i / 3) % 3),
+                                     -1.6 + 1.6 * (i / 9)};
+                double q[3], back[3];
+                makina::mkWarpInv(kinds[k], axis, rates[k], 1.0, p[0], p[1], p[2], q[0], q[1], q[2]);
+                makina::mkWarpFwd(kinds[k], axis, rates[k], 1.0, q[0], q[1], q[2], back[0], back[1],
+                                  back[2]);
+                for (int c = 0; c < 3; ++c) {
+                    const double d = std::fabs(back[c] - p[c]);
+                    if (d > worst) {
+                        worst = d;
+                    }
+                }
+            }
+        }
+    }
+    std::printf("    worst fwd(inv(p)) - p: %.2e\n", worst);
+    check(worst < 1e-9, "the forward map does not undo the inverse");
+}
+
 void roundTrip() {
     std::printf("json round trip keeps the axis and the rate\n");
     const makina::Scene s = makina::parseScene(sceneWith(boxUnder("Twist", "degreesPerUnit", 45, "Z")));
@@ -213,6 +243,7 @@ int main() {
     bend();
     taper();
     programAgrees();
+    forwardUndoesInverse();
     roundTrip();
     std::printf("\n%d checks", checks);
     if (failures > 0) {
