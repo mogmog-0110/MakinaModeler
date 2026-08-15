@@ -25,20 +25,62 @@ inline std::string flt(float v) {
     return buf;
 }
 
+/// Writes a leaf's warp chain (D-14), mirroring makina::detail::throughWarps line for line:
+/// `{prefix}w{i}` is the point after every warp, `{prefix}o{i}` the guard distance -- positive
+/// when the point fell outside a warp's guard cube, in which case the leaf answers with it. The
+/// matrices and rates are literals, so the compiler folds them the way it folds `inv`.
+inline void emitWarpLines(std::ostringstream& o, const makina::EvalProgram& prog,
+                          const makina::EvalNode& n, std::size_t i, const char* prefix) {
+    const std::string w = std::string(prefix) + "w" + std::to_string(i);
+    const std::string g = std::string(prefix) + "o" + std::to_string(i);
+    o << "    float3 " << w << " = wp;\n";
+    o << "    float " << g << " = 0.0;\n";
+    const std::uint32_t count = n.warpRef & 0xffu;
+    std::size_t at = static_cast<std::size_t>(n.warpRef >> 8) * makina::kWarpFloats;
+    for (std::uint32_t k = 0; k < count; ++k, at += makina::kWarpFloats) {
+        const float* e = prog.warps.data() + at;
+        const std::string q = w + "_" + std::to_string(k);
+        o << "    float3 " << q << " = float3(";
+        for (int r = 0; r < 3; ++r) {
+            o << "dot(float4(" << flt(e[4 + r * 4]) << ", " << flt(e[5 + r * 4]) << ", "
+              << flt(e[6 + r * 4]) << ", " << flt(e[7 + r * 4]) << "), float4(" << w << ", 1.0))"
+              << (r < 2 ? ", " : "");
+        }
+        o << ");\n";
+        const int kindAxis = static_cast<int>(e[0]);
+        if (e[3] > 0.0f) {
+            // Guard cylinder: past its margin band the leaf answers with the distance to it,
+            // scaled like Eval does.
+            o << "    if (" << g << " == 0.0) { float " << q << "d = mkWarpGuardDistance("
+              << (kindAxis % 4) << ", " << flt(e[3]) << ", " << flt(e[2]) << ", " << q << ".x, "
+              << q << ".y, " << q << ".z); if (" << q << "d > " << flt(e[17]) << ") " << g
+              << " = " << q << "d * " << flt(e[16]) << "; }\n";
+        }
+        o << "    { float wx, wy, wz; mkWarpInv(" << (kindAxis / 4) << ", " << (kindAxis % 4)
+          << ", " << flt(e[1]) << ", " << flt(e[2]) << ", " << q << ".x, " << q << ".y, " << q
+          << ".z, wx, wy, wz); " << w << " = float3(wx, wy, wz); }\n";
+    }
+}
+
 /// Writes the two lines a primitive needs: the point in its local frame, and its distance.
 ///
 /// Shared by both generated functions rather than copied, so the distance a material is attached
 /// to is the same expression the march walked. `prefix` keeps the two functions' locals apart.
-inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n, std::size_t i,
-                               const char* prefix) {
+inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalProgram& prog,
+                               const makina::EvalNode& n, std::size_t i, const char* prefix) {
     const std::string p = std::string(prefix) + "p" + std::to_string(i);
     const std::string var = std::string(prefix) + "t" + std::to_string(i);
+    const bool warped = (n.warpRef & 0xffu) != 0;
+    const std::string src = warped ? std::string(prefix) + "w" + std::to_string(i) : "wp";
+    if (warped) {
+        emitWarpLines(o, prog, n, i, prefix);
+    }
 
     o << "    float3 " << p << " = float3(";
     for (int r = 0; r < 3; ++r) {
         o << "dot(float4(" << flt(n.inv[r * 4 + 0]) << ", " << flt(n.inv[r * 4 + 1]) << ", "
-          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(wp, 1.0))"
-          << (r < 2 ? ", " : "");
+          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(" << src
+          << ", 1.0))" << (r < 2 ? ", " : "");
     }
     o << ");\n";
 
@@ -87,25 +129,37 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalNode& n,
             break;
     }
     o << ") * " << flt(n.params[3]) << ";\n";
+    const bool density = n.op == static_cast<std::uint32_t>(makina::EvalOp::BlobSphere) ||
+                         n.op == static_cast<std::uint32_t>(makina::EvalOp::BlobCylinder);
+    if (warped && !density) {
+        // Outside a warp's guard cube the leaf answers with the cube distance (evalLeaf).
+        const std::string g = std::string(prefix) + "o" + std::to_string(i);
+        o << "    " << var << " = " << g << " > 0.0 ? " << g << " : " << var << ";\n";
+    }
 }
 
 /// BlobFinish's lines: the field bound, and when the node carries a support box (params[2] > 0)
 /// the distance to it, larger wins -- the same two bounds evalBlobFinish takes on the CPU.
-inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalNode& n, std::size_t i,
-                                const char* prefix, const std::string& field,
-                                const std::string& var) {
+inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalProgram& prog,
+                                const makina::EvalNode& n, std::size_t i, const char* prefix,
+                                const std::string& field, const std::string& var) {
     const std::string d = "(" + flt(n.params[0]) + " - " + field + ") / " + flt(n.params[1]) +
                           " * " + flt(n.params[3]);
     if (n.params[2] <= 0.0f) {
         o << "    float " << var << " = " << d << ";\n";
         return;
     }
+    const bool warped = (n.warpRef & 0xffu) != 0;
+    const std::string src = warped ? std::string(prefix) + "w" + std::to_string(i) : "wp";
+    if (warped) {
+        emitWarpLines(o, prog, n, i, prefix);
+    }
     const std::string q = std::string(prefix) + "q" + std::to_string(i);
     o << "    float3 " << q << " = float3(";
     for (int r = 0; r < 3; ++r) {
         o << "dot(float4(" << flt(n.inv[r * 4 + 0]) << ", " << flt(n.inv[r * 4 + 1]) << ", "
-          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(wp, 1.0))"
-          << (r < 2 ? ", " : "");
+          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(" << src
+          << ", 1.0))" << (r < 2 ? ", " : "");
     }
     o << ");\n";
     // Strictly outside the box only, same guard as evalBlobFinish: within it the box term is
@@ -124,11 +178,15 @@ inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalNode& n
 /// A sor or a sphere_sweep carries its samples in a side table the interpreted pipeline has no
 /// buffer for, so a program holding one must use the generated shader -- the caller decides
 /// what that costs it (the viewport falls back to the committed picture during a drag). Blob
-/// travels whole in its nodes and interprets fine.
+/// travels whole in its nodes and interprets fine. A warp chain (D-14) is another side table
+/// and rules the program out for the same reason.
 inline bool interpretable(const makina::EvalProgram& prog) {
     for (const makina::EvalNode& n : prog.nodes) {
         const makina::EvalOp op = static_cast<makina::EvalOp>(n.op);
         if (op == makina::EvalOp::Sor || op == makina::EvalOp::SphereSweep) {
+            return false;
+        }
+        if ((n.warpRef & 0xffu) != 0) {
             return false;
         }
     }
@@ -288,7 +346,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
                                          "field to close");
             }
             const std::string field = stack.back();  stack.pop_back();
-            detail::emitBlobFinishLines(o, n, i, "", field, var);
+            detail::emitBlobFinishLines(o, prog, n, i, "", field, var);
             stack.push_back(var);
             continue;
         }
@@ -311,7 +369,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
             continue;
         }
 
-        detail::emitPrimitiveLines(o, n, i, "");
+        detail::emitPrimitiveLines(o, prog, n, i, "");
         stack.push_back(var);
     }
 
@@ -365,7 +423,7 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
             // The finish node is the blob's one surface, so it carries the material; the
             // density leaves below it never win a comparison.
             const std::string dist = var + "d";
-            detail::emitBlobFinishLines(o, n, i, "m", field + ".x", dist);
+            detail::emitBlobFinishLines(o, prog, n, i, "m", field + ".x", dist);
             o << "    float3 " << var << " = float3(" << dist << ", "
               << detail::flt(static_cast<float>(n.materialId)) << ", "
               << detail::flt(n.pigmentId == makina::kNoPigment
@@ -403,7 +461,7 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
 
         // Same emitter as evalCsg, so the distance a material is attached to is the one the march
         // actually walked. Copying the expressions here instead would let the two drift.
-        detail::emitPrimitiveLines(o, n, i, "m");
+        detail::emitPrimitiveLines(o, prog, n, i, "m");
         // The pigment index rides beside the material so a surface can find both the pattern
         // it wears and the space that pattern is nailed to. The material alone cannot say the
         // second: two walls sharing one checker but standing apart need different entries.
@@ -429,7 +487,23 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
 inline std::string generateShader(const makina::EvalProgram& prog,
                                   const std::string& shadingInclude, bool interpret = false) {
     std::ostringstream o;
-    o << "#include \"scene_prelude.hlsl\"\n\n";
+    o << "#include \"scene_prelude.hlsl\"\n";
+    // The smallest distance correction any leaf carries. The field is a lower bound scaled by
+    // it (a warp's 1/L, a non-uniform Scale's smallest axis), and ambient occlusion reads
+    // "field smaller than the step" as occlusion -- so a field shrunk everywhere by 1/L reads
+    // as fully occluded and the solid goes black (a 90 deg/unit twist did, at L = 5.3). The
+    // shading divides the field by this before comparing, which is exact for one correction
+    // and conservative for a mix. 1 for every scene without warps or non-uniform scales.
+    float minCorrection = 1.0f;
+    for (const makina::EvalNode& n : prog.nodes) {
+        if (n.op < static_cast<std::uint32_t>(makina::EvalOp::Union) &&
+            n.op != static_cast<std::uint32_t>(makina::EvalOp::BlobSphere) &&
+            n.op != static_cast<std::uint32_t>(makina::EvalOp::BlobCylinder) &&
+            n.params[3] > 0.0f && n.params[3] < minCorrection) {
+            minCorrection = n.params[3];
+        }
+    }
+    o << "#define MK_MIN_CORRECTION " << detail::flt(minCorrection) << "\n\n";
     if (interpret) {
         // The program travels in a buffer instead of the source, so this shader is the same for
         // every scene and nothing needs compiling when the model changes.

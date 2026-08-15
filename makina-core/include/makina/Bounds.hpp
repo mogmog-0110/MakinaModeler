@@ -270,9 +270,22 @@ Aabb childrenBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& cou
 /// The children's box in the warp's own space: R is how far the box reaches from the axis, H how
 /// far along it. Both are what a warp's Lipschitz bound and its enclosing box are sized by, so
 /// they are computed in one place (PLAN.md D-14).
+/// How much wider than the children the guard cylinder is (warpExtent). 1.5 puts the wall half
+/// a children's-radius out, far enough that a ray reaching it is still stepping by the field,
+/// not by the wall: a guard that answers 0 exactly on its own wall turns the wall into a surface
+/// (a box appeared in place of the twisted bar the first time).
+constexpr double kWarpGuardMargin = 1.5;
+
+/// The guard cylinder about a warp's axis, in the warp's own space: radius R, half height H,
+/// both the children's reach times kWarpGuardMargin. The Lipschitz bound is sized for exactly
+/// this region (mkWarpLipschitz takes R and H), the leaves answer with the distance to it
+/// outside it (mkWarpGuardDistance), and warpBounds wraps it. A cylinder rather than a cube
+/// because every warp's stretch grows with distance from the axis, and a cube's corner sits
+/// sqrt(3) times farther out than a cylinder's wall for the same reach -- three times the
+/// twist bound, and a picture black from ambient occlusion, until this was a cylinder.
 struct WarpExtent {
-    double R;   ///< largest distance from the axis over the box's corners
-    double H;   ///< largest |coordinate| along the axis
+    double R;   ///< guard radius about the axis
+    double H;   ///< guard half height along it
     bool   valid;
 };
 
@@ -284,34 +297,28 @@ inline WarpExtent warpExtent(const Scene& s, std::uint16_t index, Fidelity f) {
         return e;
     }
     const int axis = s.nodes[index].flags & flags::kAxisMask;
-    double rho2 = 0.0;
+    double r2 = 0.0;
     for (int c = 0; c < 3; ++c) {
         const double reach = std::fabs(box.lo[c]) > std::fabs(box.hi[c]) ? std::fabs(box.lo[c])
                                                                           : std::fabs(box.hi[c]);
         if (c == axis) {
             e.H = reach;
+        } else {
+            r2 += reach * reach;
         }
-        rho2 += reach * reach;
     }
-    // R is the radius of the cube warpBounds draws, not of the children's box: the Lipschitz
-    // bound must cover every point Eval hands to the warp, and Eval hands it everything inside
-    // that cube (warpBoxDistance guards the outside). The cube's corner is at sqrt(3) * rho * g,
-    // with g the taper's growth; taken from the same formula so the two cannot drift.
-    const double rho = std::sqrt(rho2);
+    // A taper widens the section by up to 1 + |rate| * H; the guard has to hold the widened
+    // children, so its radius grows by that too.
     double g = 1.0;
     if (static_cast<Op>(s.nodes[index].op) == Op::Taper) {
         g = 1.0 + std::fabs(s.nodes[index].params[0]) * e.H;
     }
-    e.R = std::sqrt(3.0) * rho * g;
+    e.R = std::sqrt(r2) * g * kWarpGuardMargin;
+    e.H = e.H * kWarpGuardMargin;
     return e;
 }
 
-/// A box that holds the warped children. Deliberately loose: a cube about the warp's origin of
-/// half-size rho * g, where rho is the farthest corner of the unwarped box from the origin and g
-/// the largest stretch the forward map applies to it -- 1 for a twist (rotation) and a bend (the
-/// axis wraps onto an arc no farther out than it was), 1 + |rate| * H for a taper. Loose costs
-/// culling, never correctness; a tighter box can come once the warps have a picture to check it
-/// against.
+/// The box that holds the guard cylinder, through the parent's matrix.
 inline Aabb warpBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& primitiveCount,
                        Fidelity f) {
     const CsgNode& n = s.nodes[index];
@@ -321,17 +328,16 @@ inline Aabb warpBounds(const Scene& s, std::uint16_t index, const Mat4& m, int& 
     if (!local.valid) {
         return emptyAabb();
     }
-    // The same cube warpExtent sizes its R by: half-size rho * g, corner at sqrt(3) times that.
     const WarpExtent e = warpExtent(s, index, f);
-    const double r = e.R / std::sqrt(3.0);
-    (void)n;
-    Aabb cube{{-r, -r, -r}, {r, r, r}, true};
-    // Through the parent's matrix, corner by corner, the way every other box goes.
+    const int axis = n.flags & flags::kAxisMask;
+    Aabb cyl{{-e.R, -e.R, -e.R}, {e.R, e.R, e.R}, true};
+    cyl.lo[axis] = -e.H;
+    cyl.hi[axis] = e.H;
     Aabb out = emptyAabb();
     for (int i = 0; i < 8; ++i) {
-        const double corner[3] = {(i & 1) ? cube.hi[0] : cube.lo[0],
-                                  (i & 2) ? cube.hi[1] : cube.lo[1],
-                                  (i & 4) ? cube.hi[2] : cube.lo[2]};
+        const double corner[3] = {(i & 1) ? cyl.hi[0] : cyl.lo[0],
+                                  (i & 2) ? cyl.hi[1] : cyl.lo[1],
+                                  (i & 4) ? cyl.hi[2] : cyl.lo[2]};
         double w[3];
         applyMat(m, corner, w);
         for (int c = 0; c < 3; ++c) {

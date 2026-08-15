@@ -12,12 +12,18 @@
 // After both, because the march needs calcNormal and the shader-wide constants.
 #include "scene_march.hlsl"
 
+// MK_MIN_CORRECTION comes from the generated header: the field is a lower bound shrunk by the
+// leaves' distance corrections, and occlusion compares it against the step taken, so the
+// comparison is made in the field's own units or a shrunk field reads as solid shadow.
+#ifndef MK_MIN_CORRECTION
+#define MK_MIN_CORRECTION 1.0
+#endif
 float calcAO(float3 p, float3 n, float reach) {
     float occ = 0.0;
     float sca = 1.0;
     for (int i = 0; i < 5; ++i) {
         float h = reach * (0.08 + 0.92 * float(i) / 4.0);
-        occ += (h - evalCsg(p + n * h)) * sca;
+        occ += (h - evalCsg(p + n * h) / MK_MIN_CORRECTION) * sca;
         sca *= 0.95;
     }
     return saturate(1.0 - 3.0 * occ / max(reach, 1e-6));

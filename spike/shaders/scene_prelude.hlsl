@@ -8,6 +8,9 @@
 #define MAKINA_SCENE_PRELUDE_HLSL
 
 #include "Sdf.hpp"
+// Domain warps (D-14): the same inverse maps the CPU evaluator applies, so a twisted solid is
+// one twist in two compilers rather than two twists that mostly agree.
+#include "Warp.hpp"
 
 cbuffer Params : register(b0) {
     float3 gEye;        float gTanHalfFov;

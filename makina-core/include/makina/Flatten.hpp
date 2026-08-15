@@ -128,7 +128,7 @@ struct EvalProgram {
     /// Sweep samples, flat (x, y, z, radius) quads; an EvalOp::SphereSweep node points into
     /// this, and the generated shader inlines it the same way it inlines a sor's polyline.
     std::vector<float> sweepProfiles;
-    /// Warp entries, kWarpFloats each: {kind*4+axis, rate, H, guard, inv[12], corrAbove, pad3}
+    /// Warp entries, kWarpFloats each: {kind*4+axis, rate, H, guard, inv[12], corrAbove, band, pad2}
     /// where inv takes the enclosing space into the warp's own, guard is the half-size of the
     /// cube Bounds.hpp draws around the warped children, and corrAbove the distance correction
     /// of the transforms above the warp. Leaves point into this through EvalNode::warpRef.
@@ -651,14 +651,14 @@ inline Fragment flattenNode(FlattenContext& ctx, std::uint16_t index, const Mat4
         ctx.warpChain.push_back(static_cast<float>(warpKindOf(op) * 4 + (n.flags & flags::kAxisMask)));
         ctx.warpChain.push_back(static_cast<float>(warpRateOf(n)));
         ctx.warpChain.push_back(static_cast<float>(e.valid ? e.H : 0.0));
-        // The guard cube's half-size, the same number Eval's warpBoxDistance measures against
-        // (warpExtent's R is the cube's corner). Outside it the leaf returns the cube distance.
-        ctx.warpChain.push_back(static_cast<float>(e.valid ? e.R / std::sqrt(3.0) : 0.0));
+        // The guard cylinder's radius; its half height is H above. Outside the cylinder the leaf
+        // returns the distance to it (mkWarpGuardDistance), as Eval does.
+        ctx.warpChain.push_back(static_cast<float>(e.valid ? e.R : 0.0));
         for (int r = 0; r < 12; ++r) {
             ctx.warpChain.push_back(static_cast<float>(inv.m[r]));
         }
         ctx.warpChain.push_back(static_cast<float>(scaleCorrection));
-        ctx.warpChain.push_back(0.0f);
+        ctx.warpChain.push_back(static_cast<float>(warpGuardBand(*ctx.scene, index)));
         ctx.warpChain.push_back(0.0f);
         ctx.warpChain.push_back(0.0f);
         Fragment f = flattenChildren(ctx, index, identityMat(),
@@ -869,21 +869,15 @@ inline double throughWarps(const EvalProgram& prog, const EvalNode& n, const dou
         const double px = w[4] * out[0] + w[5] * out[1] + w[6] * out[2] + w[7];
         const double py = w[8] * out[0] + w[9] * out[1] + w[10] * out[2] + w[11];
         const double pz = w[12] * out[0] + w[13] * out[1] + w[14] * out[2] + w[15];
-        const double guard = w[3];
-        if (guard > 0.0) {
-            double d2 = 0.0;
-            const double q[3] = {px, py, pz};
-            for (int c = 0; c < 3; ++c) {
-                const double e = std::fabs(q[c]) - guard;
-                if (e > 0.0) {
-                    d2 += e * e;
-                }
-            }
-            if (d2 > 0.0) {
-                return std::sqrt(d2) * w[16];
+        const int kindAxis = static_cast<int>(w[0]);
+        if (w[3] > 0.0f) {
+            // Past the margin band only, as Eval::warpGuardBand: the wall must not become the
+            // nearest surface. w[17] is that band.
+            const double g = mkWarpGuardDistance(kindAxis % 4, w[3], w[2], px, py, pz);
+            if (g > w[17]) {
+                return g * w[16];
             }
         }
-        const int kindAxis = static_cast<int>(w[0]);
         mkWarpInv(kindAxis / 4, kindAxis % 4, w[1], w[2], px, py, pz, out[0], out[1], out[2]);
     }
     return 0.0;
@@ -892,7 +886,12 @@ inline double throughWarps(const EvalProgram& prog, const EvalNode& n, const dou
 inline double evalLeaf(const EvalProgram& prog, const EvalNode& n, const double wpIn[3]) {
     double wp[3];
     const double outside = throughWarps(prog, n, wpIn, wp);
-    if (outside > 0.0) {
+    // A density leaf never answers with a distance: it is summed, and its BlobFinish -- whose
+    // support box lives in the warp's space and is read through the same chain -- is where the
+    // outside of a warp becomes a distance bound.
+    const bool density = n.op == static_cast<std::uint32_t>(EvalOp::BlobSphere) ||
+                         n.op == static_cast<std::uint32_t>(EvalOp::BlobCylinder);
+    if (outside > 0.0 && !density) {
         return outside;
     }
     const double x = n.inv[0] * wp[0] + n.inv[1] * wp[1] + n.inv[2] * wp[2] + n.inv[3];

@@ -147,6 +147,24 @@ MK_FN void mkWarpInv(int kind, int axis, MK_FLOAT rate, MK_FLOAT H,
     else                { oz = ra; ox = ru; oy = rv; }
 }
 
+/// Distance from a point to the guard cylinder about the warp's axis -- radius R, half height
+/// H -- or 0 inside it. The guard is the region the Lipschitz bound is sized for; outside it the
+/// leaf answers with this distance instead of its field, and every evaluator (Eval, the CPU
+/// program, the generated shader) uses this one function so they cannot disagree about where
+/// that boundary is.
+MK_FN MK_FLOAT mkWarpGuardDistance(int axis, MK_FLOAT R, MK_FLOAT H,
+                                   MK_FLOAT x, MK_FLOAT y, MK_FLOAT z) {
+    MK_FLOAT a, u, v;
+    if (axis == 0)      { a = x; u = y; v = z; }
+    else if (axis == 1) { a = y; u = z; v = x; }
+    else                { a = z; u = x; v = y; }
+    MK_FLOAT dr = MK_SQRT(u * u + v * v) - R;
+    MK_FLOAT da = MK_ABS(a) - H;
+    MK_FLOAT ox = dr > 0.0 ? dr : 0.0;
+    MK_FLOAT oy = da > 0.0 ? da : 0.0;
+    return MK_SQRT(ox * ox + oy * oy);
+}
+
 /// A Lipschitz bound of the inverse map over a subtree of radius R about the axis and half
 /// extent H along it, so d(w^-1(p)) / L never overstates the distance. Conservative on purpose:
 /// the numbers here are proved rather than fitted, and lattice_gradient_check measures that the

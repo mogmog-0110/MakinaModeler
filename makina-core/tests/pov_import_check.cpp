@@ -291,6 +291,17 @@ void roundTrip(const std::string& path) {
     // handing the exporter the authored tree would write out a node the modeller does not draw.
     const makina::Scene original = makina::withoutMuted(makina::parseScene(readFile(path)));
 
+    // A warp (D-14) has no POV form the reader can take back: it goes out as an isosurface
+    // function, which is a picture for POV to draw and not a tree to read. One direction only,
+    // and named as such; the JSON round trip is where a warp's fidelity is held.
+    for (std::uint32_t i = 0; i < original.nodes.count; ++i) {
+        if (makina::isWarp(static_cast<makina::Op>(original.nodes[i].op))) {
+            std::printf("    holds a warp, which POV cannot hand back; the round trip does not "
+                        "apply\n");
+            return;
+        }
+    }
+
     makina::PovOptions opt;
     opt.silhouette = false;
     // The lamps go in the preamble, which is where the renderer puts them too. Leaving it

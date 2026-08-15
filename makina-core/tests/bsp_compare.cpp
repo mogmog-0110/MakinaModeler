@@ -70,6 +70,15 @@ void compareOne(const std::string& jsonPath) {
     std::printf("%s\n", jsonPath.c_str());
 
     const makina::Scene scene = makina::parseScene(readFile(jsonPath));
+    // A warp (D-14) has no boundary representation here: the BSP is affine-only and would
+    // tessellate the unwarped children. Named, not measured -- the warped field's own
+    // consistency is held by warp_check (gradient <= 1, tree/program agreement) instead.
+    for (std::uint32_t i = 0; i < scene.nodes.count; ++i) {
+        if (makina::isWarp(static_cast<makina::Op>(scene.nodes[i].op))) {
+            std::printf("    skipped: holds a warp, which the BSP tessellator does not follow\n");
+            return;
+        }
+    }
     const makina::TessellationResult mesh = makina::tessellate(scene);
 
     std::size_t polys = 0;

@@ -1,0 +1,53 @@
+{
+  "format": "makina-scene",
+  "version": 1,
+  "nextId": 6,
+  "materials": [
+    {
+      "id": 0,
+      "diffuse": [220, 140, 60],
+      "alpha": 1.0,
+      "ambient": 0.1,
+      "specular": 0.2,
+      "shininess": 40.0,
+      "emission": 0.0,
+      "texture": null
+    }
+  ],
+  "root": {
+    "id": 1,
+    "op": "SceneRoot",
+    "name": "twist",
+    "children": [
+      {
+        "id": 2,
+        "op": "Twist",
+        "name": "twist 90/unit",
+        "degreesPerUnit": 90.0,
+        "axis": "Y",
+        "children": [
+          {
+            "id": 3,
+            "op": "Difference",
+            "material": 0,
+            "children": [
+              {
+                "id": 4,
+                "op": "Box",
+                "name": "bar",
+                "x1": -0.35, "y1": -1.0, "z1": -0.12,
+                "x2": 0.35, "y2": 1.0, "z2": 0.12
+              },
+              {
+                "id": 5,
+                "op": "Cylinder",
+                "name": "bore",
+                "capPoint": 1.2, "basePoint": -1.2, "radius": 0.08
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

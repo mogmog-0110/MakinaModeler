@@ -148,25 +148,24 @@ inline void invApply(const Scene& s, std::uint16_t index, const double p[3], dou
               e.valid ? e.H : 0.0, p[0], p[1], p[2], out[0], out[1], out[2]);
 }
 
-/// Distance from p (in the warp's own space) to the cube warpBounds draws around the warped
-/// children, or 0 when inside it. The cube is the same one Bounds.hpp uses, so the culling box
-/// and this guard agree about where the Lipschitz bound stops being sized for the point.
-inline double warpBoxDistance(const Scene& s, std::uint16_t index, const double p[3]) {
-    int count = 0;
-    const Aabb box = warpBounds(s, index, identityMat(), count, Fidelity{});
-    if (!box.valid) {
+/// The width of the band inside the guard where the field, not the guard, answers even though
+/// the point may be past the children: the guard is kWarpGuardMargin times the children, and
+/// the band is the difference along the radius.
+inline double warpGuardBand(const Scene& s, std::uint16_t index) {
+    const WarpExtent e = warpExtent(s, index, Fidelity{});
+    if (!e.valid) {
         return 0.0;
     }
-    double d2 = 0.0;
-    for (int c = 0; c < 3; ++c) {
-        const double lo = box.lo[c] - p[c];
-        const double hi = p[c] - box.hi[c];
-        const double e = lo > hi ? lo : hi;
-        if (e > 0.0) {
-            d2 += e * e;
-        }
+    return e.R * (1.0 - 1.0 / kWarpGuardMargin);
+}
+
+/// Distance from p (in the warp's own space) to the guard cylinder, or 0 inside it.
+inline double warpBoxDistance(const Scene& s, std::uint16_t index, const double p[3]) {
+    const WarpExtent e = warpExtent(s, index, Fidelity{});
+    if (!e.valid) {
+        return 0.0;
     }
-    return std::sqrt(d2);
+    return mkWarpGuardDistance(s.nodes[index].flags & flags::kAxisMask, e.R, e.H, p[0], p[1], p[2]);
 }
 
 /// Surface distance of a primitive in its own local space. kEmpty for anything without geometry.
@@ -441,8 +440,11 @@ inline double evalNode(const Scene& s, std::uint16_t index, const double p[3], d
         // stands in: it is a true lower bound on the distance to anything inside, and a march
         // that far out only needs to know it may step that far. Strictly outside only -- inside
         // the box the distance is 0 and would erase the field (memory: lower-bound-two-traps).
+        // Only when clear of the cube by its margin: the guard's own wall must never be the
+        // nearest thing a march sees, or it draws the wall (it did). Inside the margin band the
+        // field is live and L is sized for it (warpExtent).
         const double outside = warpBoxDistance(s, index, p);
-        if (outside > 0.0) {
+        if (outside > warpGuardBand(s, index)) {
             return outside * scale;
         }
     }
