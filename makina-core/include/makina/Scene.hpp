@@ -97,23 +97,37 @@ enum class PigmentType : std::uint8_t {
     Radial   = 3,  ///< the angle about Y, which POV measures from -Z
 };
 
-/// A two-stop pigment. POV's color_map can hold more, and this is the shape of the common case.
+/// A pigment: a pattern and the color_map it reads.
 ///
 /// Held as its own table rather than inline in Material because a pigment is a much bigger thing
 /// than a color and most materials do not have one -- and Scene is the engine's GameMemory, so
 /// every byte here is copied on every snapshot (History.hpp).
+///
+/// The map is up to kMaxStops entries of (position, color), in ascending position, read the way
+/// POV reads a color_map -- measured, spike/pov_colormap_probe.py: linear in the pattern value
+/// between neighbouring stops, and clamped to the end colors outside them (11 of 11 sample points
+/// within one 8-bit step). Two stops at 0 and 1 is what every scene meant before the map grew;
+/// scene.pov's door wants five, its sky three. Eight is the ceiling because the entries ride in
+/// the GPU pigment verbatim, and a checker ignores everything but the first two.
 struct Pigment {
+    static constexpr int kMaxStops = 8;
     std::uint8_t type;        ///< PigmentType
-    std::uint8_t _pad0[3];
-    float        a[3];        ///< the color at map position 0
-    float        b[3];        ///< the color at map position 1
+    std::uint8_t stopCount;   ///< 2..kMaxStops; a Pigment with fewer than 2 is malformed
+    std::uint8_t _pad0[2];
     /// Scale applied to the point before the pattern reads it, POV's `scale`.
     float        scale[3];
     float        translate[3];
     /// Which axis a Gradient runs along, as a unit vector. POV takes a vector, not a name.
     float        axis[3];
+    float        _pad1[6];
+    /// The stops, ascending by position: {r, g, b, position}. Only the first stopCount mean
+    /// anything. Four floats per stop and the block 16-byte aligned because HLSL lays an array
+    /// out with every element on a float4 boundary; a float[3] color here would silently land
+    /// on different bytes there.
+    float        stop[kMaxStops][4];
 };
-static_assert(sizeof(Pigment) == 64);
+static_assert(sizeof(Pigment) == 4 + 36 + 24 + 128, "Pigment must match the HLSL declaration");
+static_assert(sizeof(Pigment) % 16 == 0, "Pigment must be float4-granular for the GPU");
 static_assert(std::is_trivially_copyable_v<Pigment>);
 
 /// One light, in POV-Ray's terms.

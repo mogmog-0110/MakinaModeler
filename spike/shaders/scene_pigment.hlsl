@@ -20,12 +20,15 @@
 /// a pattern needs the space of the object wearing it and the same pattern on two objects in
 /// different places is two entries.
 struct MkPigment {
-    uint   type;
-    float3 colorA;
-    float3 colorB;
+    /// PigmentType in the low byte, stopCount in the next: the C++ side packs both into one word.
+    uint   typeAndStops;
     float3 scale;
     float3 translate;
     float3 axis;
+    float3 _pad1;
+    float3 _pad2;
+    /// The color_map, {r, g, b, position}, ascending; only the first stop count are read.
+    float4 stop[8];
     /// world -> the space the pattern was authored in, three rows of four.
     float4 inv0;
     float4 inv1;
@@ -53,21 +56,22 @@ float mkPatternAt(MkPigment g, float3 wp) {
     const float3 op = float3(dot(g.inv0, w), dot(g.inv1, w), dot(g.inv2, w));
     const float3 p = (op - g.translate) / g.scale;
 
-    if (g.type == MK_PIGMENT_CHECKER) {
+    const uint type = g.typeAndStops & 0xffu;
+    if (type == MK_PIGMENT_CHECKER) {
         // POV's checker is the parity of the three floors, and it is a hard edge: there is no
         // blend between the two colors, which is what makes it a checker and not a gradient.
         const float3 f = floor(p);
         return fmod(abs(f.x + f.y + f.z), 2.0) < 1.0 ? 0.0 : 1.0;
     }
 
-    if (g.type == MK_PIGMENT_GRADIENT) {
+    if (type == MK_PIGMENT_GRADIENT) {
         // The fractional part along the axis, so the ramp repeats every unit and runs 0 -> 1 -> 0.
         // POV's gradient is a sawtooth, not a triangle: it snaps back rather than reversing.
         const float3 a = normalize(g.axis);
         return frac(dot(p, a));
     }
 
-    if (g.type == MK_PIGMENT_RADIAL) {
+    if (type == MK_PIGMENT_RADIAL) {
         // POV measures the angle about Y starting from -Z, counting the same way its left-handed
         // scene does. Written out rather than left to atan2's own zero, which is +X.
         const float ang = atan2(p.x, -p.z);
@@ -77,12 +81,30 @@ float mkPatternAt(MkPigment g, float3 wp) {
     return 0.0;
 }
 
-/// The two-stop color_map POV would interpolate.
+/// The color_map, read the way POV reads it -- measured, spike/pov_colormap_probe.py: linear in
+/// the pattern value between neighbouring stops, clamped to the end colors outside them.
 ///
-/// Linear between the stops, which is what POV does between two entries of a color_map. Checker
-/// never lands between them, so its hard edge survives this unchanged.
+/// Checker's pattern value is exactly 0 or 1 and its two stops sit there, so its hard edge
+/// survives this unchanged. The loop is over a fixed 8 so it unrolls; the stop count only
+/// decides where the clamp at the far end lands.
 float3 mkPigmentColorAt(MkPigment g, float3 wp) {
-    return lerp(g.colorA, g.colorB, saturate(mkPatternAt(g, wp)));
+    const float v = mkPatternAt(g, wp);
+    const uint count = (g.typeAndStops >> 8u) & 0xffu;
+    float3 col = g.stop[0].rgb;
+    [unroll]
+    for (uint i = 1; i < 8; ++i) {
+        if (i < count) {
+            const float4 lo = g.stop[i - 1];
+            const float4 hi = g.stop[i];
+            const float t = saturate((v - lo.w) / max(hi.w - lo.w, 1e-6));
+            // Past this stop the next iteration overwrites; before the first, t is 0 and the
+            // first color stands, which is the clamp POV applies below the map.
+            if (v >= lo.w) {
+                col = lerp(lo.rgb, hi.rgb, t);
+            }
+        }
+    }
+    return col;
 }
 
 /// The pigment this surface wears, or the material's flat color when it wears none.

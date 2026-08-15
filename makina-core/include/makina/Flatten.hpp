@@ -111,7 +111,7 @@ struct GpuPigment {
     /// world -> the space of the object that wears this pattern, three rows of four.
     float inv[12];
 };
-static_assert(sizeof(GpuPigment) == 112, "GpuPigment must match the HLSL declaration");
+static_assert(sizeof(GpuPigment) == 192 + 48, "GpuPigment must match the HLSL declaration");
 
 struct EvalProgram {
     std::vector<EvalNode> nodes;   ///< RPN order

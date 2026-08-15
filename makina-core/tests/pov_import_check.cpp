@@ -209,8 +209,10 @@ std::vector<float> appearanceAt(const makina::Scene& s, const makina::EvalProgra
     }
     const makina::GpuPigment& g = prog.pigments[hit.pigmentId];
     v.push_back(static_cast<float>(g.pattern.type));
-    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.a[i]); }
-    for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.b[i]); }
+    v.push_back(static_cast<float>(g.pattern.stopCount));
+    for (int st = 0; st < g.pattern.stopCount; ++st) {
+        for (int i = 0; i < 4; ++i) { v.push_back(g.pattern.stop[st][i]); }
+    }
     for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.scale[i]); }
     for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.translate[i]); }
     for (int i = 0; i < 3; ++i) { v.push_back(g.pattern.axis[i]); }
@@ -845,6 +847,56 @@ void finishDiffuse() {
           "finish diffuse 0");
 }
 
+/// color_map with more than two stops: read whole, kept through both round trips in order,
+/// and one stop refused. Two stops at 0 and 1 still write the old colorA/colorB form so every
+/// existing scene round trips byte for byte.
+void colorMapStops() {
+    std::printf("color_map stops survive both round trips in order\n");
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere{<0,0,0>,1 pigment{gradient x color_map{[0.0 color rgb <0.2,0.2,0.2>] "
+            "[0.46 color rgb <0.5,0.5,0.5>] [0.5 color rgb <1,0,0>] [1.0 color rgb <0.9,0.9,0.9>]} "
+            "scale 0.3}}");
+        check(r.unsupported.empty(), "a four-stop map should read whole");
+        check(r.scene.pigments.count == 1, "one pigment expected");
+        const makina::Pigment& g = r.scene.pigments[0];
+        check(g.stopCount == 4, "four stops expected, got " + std::to_string(g.stopCount));
+        check(std::fabs(g.stop[1][3] - 0.46f) < 1e-6f && std::fabs(g.stop[2][0] - 1.0f) < 1e-6f,
+              "stops should keep their positions and colors in file order");
+
+        makina::PovOptions opt;
+        const makina::PovImportResult back = makina::importPov(makina::writePov(r.scene, opt));
+        check(back.scene.pigments.count == 1 && back.scene.pigments[0].stopCount == 4,
+              "the POV round trip should keep all four stops");
+        const makina::Scene viaJson = makina::parseScene(makina::writeScene(r.scene));
+        check(viaJson.pigments.count == 1 && viaJson.pigments[0].stopCount == 4 &&
+                  std::fabs(viaJson.pigments[0].stop[2][3] - 0.5f) < 1e-6f,
+              "the JSON round trip should keep all four stops");
+        check(makina::writeScene(r.scene).find("\"stops\"") != std::string::npos,
+              "more than two stops should take the general JSON form");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the four-stop map was refused: ") + e.what());
+    }
+
+    // Two stops at 0 and 1 keep the old form, which is what keeps every existing scene the same.
+    try {
+        const makina::PovImportResult r = makina::importPov(
+            "sphere{<0,0,0>,1 pigment{gradient y color_map{[0 color rgb 0] [1 color rgb 1]}}}");
+        const std::string json = makina::writeScene(r.scene);
+        check(json.find("\"colorA\"") != std::string::npos && json.find("\"stops\"") == std::string::npos,
+              "two stops at 0 and 1 should still write colorA/colorB");
+    } catch (const makina::PovParseError& e) {
+        check(false, std::string("the two-stop map was refused: ") + e.what());
+    }
+
+    refuses("sphere{<0,0,0>,1 pigment{gradient x color_map{[0.5 color rgb 1]}}}",
+            "at least two stops");
+    notes("sphere{<0,0,0>,1 pigment{gradient x color_map{[0 color rgb 0][0.1 color rgb 1]"
+          "[0.2 color rgb 0][0.3 color rgb 1][0.4 color rgb 0][0.5 color rgb 1][0.6 color rgb 0]"
+          "[0.7 color rgb 1][0.8 color rgb 0]}}}",
+          "color_map with 9 stops");
+}
+
 /// finish{brilliance}: read, kept through both round trips, and absent from a file that never
 /// said it. Not folded like diffuse -- it is an exponent, and no algebra on the pigment reproduces
 /// pow(N.L, b) -- so it earned Material a field.
@@ -969,9 +1021,9 @@ void srgbDecode() {
     const makina::PovImportResult pattern = makina::importPov(
         "sphere{<0,0,0>,1 pigment{checker color srgb <0.5,0.5,0.5> color rgb <0.5,0.5,0.5>}}");
     check(pattern.scene.pigments.count == 1, "one pigment expected");
-    check(std::fabs(pattern.scene.pigments[0].a[0] - kLinearHalf) < 1e-5f,
+    check(std::fabs(pattern.scene.pigments[0].stop[0][0] - kLinearHalf) < 1e-5f,
           "a checker srgb color was read as linear");
-    check(std::fabs(pattern.scene.pigments[0].b[0] - 0.5f) < 1e-6f,
+    check(std::fabs(pattern.scene.pigments[0].stop[1][0] - 0.5f) < 1e-6f,
           "a checker rgb color was changed");
 
     const makina::PovImportResult light = makina::importPov(
@@ -994,6 +1046,7 @@ int main(int argc, char** argv) {
         sweepImport();
         finishDiffuse();
         finishBrilliance();
+        colorMapStops();
         randStream();
         includeFollows();
         srgbDecode();

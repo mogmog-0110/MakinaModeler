@@ -80,7 +80,10 @@ Grasp3D の `.gsf` へ書き戻す経路は**作らない**。
       //   "brilliance": 0.9            POV finish{brilliance}: 拡散項の N·L の指数。既定 1
       //                                （POV に吐かせて cos^b と 4 桁一致、spike/pov_brilliance_probe.py）
       //   "finishDiffuse": 0.78        POV finish{diffuse}: 拡散の係数。既定 0.6。"diffuse" は色なので別名
-      //   "pigment": {...}             §3 参照
+      //   "pigment": {...}             pattern と color_map。2 stop (0/1) は "colorA"/"colorB"、
+      //                                それ以外は "stops": [[pos,[r,g,b]],...] (最大 8、昇順)。
+      //                                補間は区間線形・外側は端色クランプ (POV 実測、
+      //                                spike/pov_colormap_probe.py 11/11 点)
     }
   ]
 }

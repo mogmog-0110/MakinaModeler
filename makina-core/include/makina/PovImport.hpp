@@ -907,11 +907,12 @@ private:
         }
     }
 
-    /// `color_map { [0.0 color ...] [1.0 color ...] }`, of which two stops are representable.
+    /// `color_map { [pos color ...] ... }`, up to Pigment::kMaxStops entries.
     ///
-    /// A map with more stops is reported rather than truncated. Keeping the first and last would
+    /// A map with more is reported rather than truncated. Keeping the first and last would
     /// render a smooth ramp where the file asked for bands, which is a picture nobody would
-    /// question and nobody could compare.
+    /// question and nobody could compare. One stop is refused: a map is a ramp between at least
+    /// two, and POV itself draws a single entry as a flat color the file could have said plainly.
     void readColorMap(Pigment& g) {
         take();
         expectPunct('{');
@@ -925,7 +926,7 @@ private:
                 continue;
             }
             take();
-            (void)number();   // the position, which a two-stop pigment fixes at 0 and 1
+            const double pos = number();
             float c[3] = {0, 0, 0};
             readMapColor(c);
             while (!isPunct(']')) {
@@ -935,17 +936,21 @@ private:
                 skipValue();
             }
             take();
-            if (stops == 0) {
-                for (int i = 0; i < 3; ++i) { g.a[i] = c[i]; }
-            } else if (stops == 1) {
-                for (int i = 0; i < 3; ++i) { g.b[i] = c[i]; }
+            if (stops < Pigment::kMaxStops) {
+                for (int i = 0; i < 3; ++i) { g.stop[stops][i] = c[i]; }
+                g.stop[stops][3] = static_cast<float>(pos);
             }
             ++stops;
         }
         take();
-        if (stops > 2) {
+        if (stops > Pigment::kMaxStops) {
             note("color_map with " + std::to_string(stops) + " stops");
+            stops = Pigment::kMaxStops;
         }
+        if (stops < 2) {
+            refuse("a color_map needs at least two stops; this one has " + std::to_string(stops));
+        }
+        g.stopCount = static_cast<std::uint8_t>(stops);
     }
 
     /// The pattern of a pigment, and the transform POV applies to it.
@@ -963,11 +968,14 @@ private:
             g.type = static_cast<std::uint8_t>(PigmentType::Checker);
             // The two colors follow the keyword directly, with no map.
             if (isWord("color") || isWord("rgb") || isWord("srgb")) {
-                readMapColor(g.a);
+                readMapColor(g.stop[0]);
             }
             if (isWord("color") || isWord("rgb") || isWord("srgb")) {
-                readMapColor(g.b);
+                readMapColor(g.stop[1]);
             }
+            g.stop[0][3] = 0.0f;
+            g.stop[1][3] = 1.0f;
+            g.stopCount = 2;
         } else if (kind == "gradient") {
             g.type = static_cast<std::uint8_t>(PigmentType::Gradient);
             double v[3];
@@ -1022,6 +1030,14 @@ private:
                 continue;
             }
             skipValue();
+        }
+        if (g.stopCount == 0) {
+            // A gradient or radial with no color_map: POV ramps black to white. Two stops, so
+            // the pigment is well formed and the picture is what POV draws.
+            g.stop[0][3] = 0.0f;
+            g.stop[1][0] = g.stop[1][1] = g.stop[1][2] = 1.0f;
+            g.stop[1][3] = 1.0f;
+            g.stopCount = 2;
         }
 
         if (m_pigments.size() >= Scene::kMaxPigments) {

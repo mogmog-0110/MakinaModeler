@@ -146,18 +146,46 @@ inline Pigment readPigment(const nlohmann::json& j) {
                              "checker, gradient or radial");
     }
 
-    const auto rgb = [&j](const char* key, float (&dst)[3], float fallback) {
-        if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
+    // The map. "stops" is the general form; "colorA"/"colorB" is what every file written before
+    // maps grew says, and reads as two stops at 0 and 1 -- the same picture it always was.
+    if (j.contains("stops") && j["stops"].is_array()) {
+        const auto& stops = j["stops"];
+        if (stops.size() < 2 || stops.size() > static_cast<std::size_t>(Pigment::kMaxStops)) {
+            throw SceneJsonError("a pigment needs 2 to " + std::to_string(Pigment::kMaxStops) +
+                                 " stops; this one has " + std::to_string(stops.size()));
+        }
+        int n = 0;
+        for (const auto& st : stops) {
+            if (!st.is_array() || st.size() != 2 || !st[1].is_array() || st[1].size() != 3) {
+                throw SceneJsonError("a pigment stop is [position, [r, g, b]]");
+            }
+            p.stop[n][3] = st[0].get<float>();
             for (int c = 0; c < 3; ++c) {
                 // 0-255 like Material::diffuse, so one file does not mix two conventions.
-                dst[c] = j[key][c].get<float>() / 255.0f;
+                p.stop[n][c] = st[1][c].get<float>() / 255.0f;
             }
-        } else {
-            dst[0] = dst[1] = dst[2] = fallback;
+            if (n > 0 && p.stop[n][3] < p.stop[n - 1][3]) {
+                throw SceneJsonError("pigment stops must be in ascending position");
+            }
+            ++n;
         }
-    };
-    rgb("colorA", p.a, 1.0f);
-    rgb("colorB", p.b, 0.0f);
+        p.stopCount = static_cast<std::uint8_t>(n);
+    } else {
+        const auto rgb = [&j](const char* key, float* dst, float fallback) {
+            if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
+                for (int c = 0; c < 3; ++c) {
+                    dst[c] = j[key][c].get<float>() / 255.0f;
+                }
+            } else {
+                dst[0] = dst[1] = dst[2] = fallback;
+            }
+        };
+        rgb("colorA", p.stop[0], 1.0f);
+        rgb("colorB", p.stop[1], 0.0f);
+        p.stop[0][3] = 0.0f;
+        p.stop[1][3] = 1.0f;
+        p.stopCount = 2;
+    }
 
     const auto vec3 = [&j](const char* key, float (&dst)[3], float fx, float fy, float fz) {
         if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
@@ -191,19 +219,31 @@ inline nlohmann::ordered_json writePigment(const Pigment& p) {
         case PigmentType::Radial:   type = "radial"; break;
         default:                    type = "checker"; break;
     }
-    const auto rgb = [](const float (&c)[3]) {
+    const auto rgb = [](const float* c) {
         return nlohmann::ordered_json{int(c[0] * 255.0f + 0.5f), int(c[1] * 255.0f + 0.5f),
                                       int(c[2] * 255.0f + 0.5f)};
     };
     const auto vec3 = [](const float (&c)[3]) {
         return nlohmann::ordered_json{c[0], c[1], c[2]};
     };
-    return nlohmann::ordered_json{{"type", type},
-                                  {"colorA", rgb(p.a)},
-                                  {"colorB", rgb(p.b)},
-                                  {"scale", vec3(p.scale)},
-                                  {"translate", vec3(p.translate)},
-                                  {"axis", vec3(p.axis)}};
+    nlohmann::ordered_json out{{"type", type}};
+    // Two stops at 0 and 1 are written the way they always were, so every existing scene round
+    // trips byte for byte; anything else takes the general form.
+    const bool plain = p.stopCount == 2 && p.stop[0][3] == 0.0f && p.stop[1][3] == 1.0f;
+    if (plain) {
+        out["colorA"] = rgb(p.stop[0]);
+        out["colorB"] = rgb(p.stop[1]);
+    } else {
+        nlohmann::ordered_json stops = nlohmann::ordered_json::array();
+        for (int i = 0; i < p.stopCount; ++i) {
+            stops.push_back(nlohmann::ordered_json{p.stop[i][3], rgb(p.stop[i])});
+        }
+        out["stops"] = std::move(stops);
+    }
+    out["scale"] = vec3(p.scale);
+    out["translate"] = vec3(p.translate);
+    out["axis"] = vec3(p.axis);
+    return out;
 }
 
 /// Reads one light, defaulting what POV defaults.

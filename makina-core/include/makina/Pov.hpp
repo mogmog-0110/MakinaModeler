@@ -166,17 +166,19 @@ inline std::string povPigment(const Pigment& p) {
     }
     t += "\n";
 
+    const auto rgb = [](const float* c) {
+        return "color rgb<" + num(c[0]) + "," + num(c[1]) + "," + num(c[2]) + ">";
+    };
     if (static_cast<PigmentType>(p.type) == PigmentType::Checker) {
         // checker takes two colors directly; giving it a color_map would make POV interpolate
         // across a pattern that has no in-between, and the hard edge would go soft.
-        t += "\t\tcolor rgb<" + num(p.a[0]) + "," + num(p.a[1]) + "," + num(p.a[2]) + ">\n";
-        t += "\t\tcolor rgb<" + num(p.b[0]) + "," + num(p.b[1]) + "," + num(p.b[2]) + ">\n";
+        t += "\t\t" + rgb(p.stop[0]) + "\n";
+        t += "\t\t" + rgb(p.stop[1]) + "\n";
     } else {
         t += "\t\tcolor_map{\n";
-        t += "\t\t\t[0.0 color rgb<" + num(p.a[0]) + "," + num(p.a[1]) + "," + num(p.a[2]) +
-             ">]\n";
-        t += "\t\t\t[1.0 color rgb<" + num(p.b[0]) + "," + num(p.b[1]) + "," + num(p.b[2]) +
-             ">]\n";
+        for (int i = 0; i < p.stopCount; ++i) {
+            t += "\t\t\t[" + num(p.stop[i][3]) + " " + rgb(p.stop[i]) + "]\n";
+        }
         t += "\t\t}\n";
     }
 
