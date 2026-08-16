@@ -12,9 +12,11 @@
 
 #pragma once
 
+#include "Bounds.hpp"
 #include "Scene.hpp"
 
 #include <cstdint>
+#include <memory>
 
 namespace makina {
 
@@ -59,12 +61,16 @@ inline float trackValueAt(const Track& tr, float t) {
 
 }  // namespace detail
 
-/// The scene as it stands at time t: a copy with every track's parameter written in.
+/// The scene as it stands at time t, written into `out`: a copy of s with every track's
+/// parameter replaced by its value at t. `out` may live on the heap, which is what an engine
+/// with a 1 MB thread stack needs -- a Scene is a few hundred kilobytes.
 ///
 /// A track whose node id has left the scene is skipped -- an id that is dangling names nothing,
 /// and inventing a node for it would be worse than a key that no longer moves anything.
-[[nodiscard]] inline Scene sampleAt(const Scene& s, float t) {
-    Scene out = s;
+inline void sampleInto(const Scene& s, float t, Scene& out) {
+    if (&out != &s) {
+        out = s;
+    }
     for (std::uint32_t k = 0; k < s.tracks.count; ++k) {
         const Track& tr = s.tracks[k];
         for (std::uint32_t i = 0; i < out.nodes.count; ++i) {
@@ -76,7 +82,58 @@ inline float trackValueAt(const Track& tr, float t) {
             }
         }
     }
+}
+
+/// The scene as it stands at time t, by value. Convenient where the stack is a modeller's.
+[[nodiscard]] inline Scene sampleAt(const Scene& s, float t) {
+    Scene out;
+    sampleInto(s, t, out);
     return out;
+}
+
+/// The box every pose of the motion fits in: the union of worldBounds over the keys and over
+/// `steps` evenly spaced times between the first and last key. A moving solid is clipped to
+/// its box by everything that marches it (the engine's wrapper, the viewport's ground), and the
+/// rest pose's box is not that box -- an arm swinging out of it was cut off at the box face.
+/// Sampled rather than derived, because a Catmull-Rom track can overshoot its keys; the steps
+/// are what bound that overshoot. A still scene gives worldBounds(s).
+[[nodiscard]] inline BoundsResult motionBounds(const Scene& s, int steps = 32) {
+    BoundsResult all = worldBounds(s);
+    if (s.tracks.count == 0) {
+        return all;
+    }
+    // Heap scratch: a Scene is far too big for a stack frame (Scene.hpp).
+    const std::unique_ptr<Scene> posed = std::make_unique<Scene>();
+    const auto take = [&](float t) {
+        sampleInto(s, t, *posed);
+        const BoundsResult b = worldBounds(*posed);
+        if (!b.box.valid) {
+            return;
+        }
+        if (!all.box.valid) {
+            all.box = b.box;
+            return;
+        }
+        for (int i = 0; i < 3; ++i) {
+            all.box.lo[i] = b.box.lo[i] < all.box.lo[i] ? b.box.lo[i] : all.box.lo[i];
+            all.box.hi[i] = b.box.hi[i] > all.box.hi[i] ? b.box.hi[i] : all.box.hi[i];
+        }
+    };
+    float first = 0.0f, last = 0.0f;
+    bool any = false;
+    for (std::uint32_t k = 0; k < s.tracks.count; ++k) {
+        const Track& tr = s.tracks[k];
+        for (int i = 0; i < tr.keyCount; ++i) {
+            take(tr.time[i]);
+            first = !any || tr.time[i] < first ? tr.time[i] : first;
+            last = !any || tr.time[i] > last ? tr.time[i] : last;
+            any = true;
+        }
+    }
+    for (int i = 1; any && i < steps; ++i) {
+        take(first + (last - first) * static_cast<float>(i) / static_cast<float>(steps));
+    }
+    return all;
 }
 
 /// The last key time over every track, or 0 for a still scene: how long the motion is.

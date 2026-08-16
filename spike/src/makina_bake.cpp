@@ -9,7 +9,12 @@
 // So the compile moves to import. The engine reads two .cso files and a manifest, and runs at
 // generated-code speed with no compiler present.
 //
-//   makina_bake <scene.makina.json> [-o <dir>] [--shading <file.hlsl>]
+//   makina_bake <scene.makina.json> [-o <dir>] [--shading <file.hlsl>] [--live]
+//
+// --live (PLAN.md D-15) bakes a shader specialised to the tree's structure only: the leaf
+// numbers are read from the program buffer at t0, so the engine uploads flatten(sampleAt(t))
+// each frame and a joint moves without a recompile. The manifest says "live": true and the
+// engine refuses to upload a program of another node count to it.
 //
 // Writes <name>.vs.cso, <name>.ps.cso and <name>.csgbake.json next to each other.
 
@@ -69,6 +74,7 @@ int main(int argc, char** argv) {
     std::string scenePath;
     std::string outDir;
     std::string shading = "scene_shading.hlsl";
+    bool live = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -76,6 +82,8 @@ int main(int argc, char** argv) {
             outDir = argv[++i];
         } else if (a == "--shading" && i + 1 < argc) {
             shading = argv[++i];
+        } else if (a == "--live") {
+            live = true;
         } else {
             scenePath = a;
         }
@@ -83,7 +91,8 @@ int main(int argc, char** argv) {
 
     if (scenePath.empty()) {
         std::fprintf(stderr,
-                     "usage: makina_bake <scene.makina.json> [-o <dir>] [--shading <file.hlsl>]\n");
+                     "usage: makina_bake <scene.makina.json> [-o <dir>] [--shading <file.hlsl>] "
+                     "[--live]\n");
         return 2;
     }
 
@@ -116,7 +125,7 @@ int main(int argc, char** argv) {
             if (!out) {
                 throw std::runtime_error("could not write '" + hlslPath + "'");
             }
-            out << spike::generateShader(prog, shading);
+            out << spike::generateShader(prog, shading, false, live);
         }
 
         const spike::DxcPaths paths{DXC_PATH, SPIKE_SHADER_DIR, MAKINA_CORE_INCLUDE};
@@ -139,7 +148,10 @@ int main(int argc, char** argv) {
             {"vs", std::filesystem::path(vsPath).filename().string()},
             {"ps", std::filesystem::path(psPath).filename().string()},
             {"programNodes", prog.nodes.size()},
-            {"maxStackDepth", prog.maxStackDepth}};
+            {"maxStackDepth", prog.maxStackDepth},
+            // Whether the shader reads its numbers from the buffer (D-15). Absent in older
+            // manifests, which the engine reads as false: those shaders ignore any upload.
+            {"live", live}};
 
         const std::string manifestPath = (dir / (stem + ".csgbake.json")).string();
         std::ofstream out(manifestPath, std::ios::binary);

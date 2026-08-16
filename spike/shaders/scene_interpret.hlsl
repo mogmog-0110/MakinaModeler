@@ -20,19 +20,7 @@
 
 #include "Sdf.hpp"
 
-/// Must match makina::EvalNode byte for byte (Flatten.hpp asserts the size on the CPU side).
-struct EvalNode {
-    uint  op;
-    uint  materialId;
-    uint  pigmentId;
-    uint  _pad;
-    float4 params;
-    float4 inv0;
-    float4 inv1;
-    float4 inv2;
-};
-
-StructuredBuffer<EvalNode> gProgram : register(t0);
+#include "scene_program.hlsl"
 
 /// Deepest stack any program can need. Balanced folding keeps this logarithmic in the node count
 /// (Flatten.hpp), so 24 covers a scene far larger than the node array can hold.

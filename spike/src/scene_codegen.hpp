@@ -25,6 +25,29 @@ inline std::string flt(float v) {
     return buf;
 }
 
+/// A leaf's number, as the generated code should spell it (PLAN.md D-15).
+///
+/// Baked (`live == false`) it is a literal and the compiler folds it. Live it is a read from the
+/// program buffer the interpreter uses, `gProgram[i]`, so the shader is specialised to the
+/// tree's *structure* only and the engine can upload a freshly sampled program every frame --
+/// a joint's angle changes the inverse matrices of every leaf under it, and nothing else. What
+/// stays literal is what says which structure this is: ops, material ids, sor and sweep tables,
+/// warp chains.
+inline std::string invAt(const makina::EvalNode& n, std::size_t i, int k, bool live) {
+    if (!live) {
+        return flt(n.inv[k]);
+    }
+    static const char* const kComp = "xyzw";
+    return "gProgram[" + std::to_string(i) + "].inv" + std::to_string(k / 4) + "." + kComp[k % 4];
+}
+inline std::string paramAt(const makina::EvalNode& n, std::size_t i, int k, bool live) {
+    if (!live) {
+        return flt(n.params[k]);
+    }
+    static const char* const kComp = "xyzw";
+    return "gProgram[" + std::to_string(i) + "].params." + kComp[k];
+}
+
 /// Writes a leaf's warp chain (D-14), mirroring makina::detail::throughWarps line for line:
 /// `{prefix}w{i}` is the point after every warp, `{prefix}o{i}` the guard distance -- positive
 /// when the point fell outside a warp's guard cube, in which case the leaf answers with it. The
@@ -67,7 +90,8 @@ inline void emitWarpLines(std::ostringstream& o, const makina::EvalProgram& prog
 /// Shared by both generated functions rather than copied, so the distance a material is attached
 /// to is the same expression the march walked. `prefix` keeps the two functions' locals apart.
 inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalProgram& prog,
-                               const makina::EvalNode& n, std::size_t i, const char* prefix) {
+                               const makina::EvalNode& n, std::size_t i, const char* prefix,
+                               bool live) {
     const std::string p = std::string(prefix) + "p" + std::to_string(i);
     const std::string var = std::string(prefix) + "t" + std::to_string(i);
     const bool warped = (n.warpRef & 0xffu) != 0;
@@ -78,33 +102,33 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalProgram&
 
     o << "    float3 " << p << " = float3(";
     for (int r = 0; r < 3; ++r) {
-        o << "dot(float4(" << flt(n.inv[r * 4 + 0]) << ", " << flt(n.inv[r * 4 + 1]) << ", "
-          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(" << src
-          << ", 1.0))" << (r < 2 ? ", " : "");
+        o << "dot(float4(" << invAt(n, i, r * 4 + 0, live) << ", " << invAt(n, i, r * 4 + 1, live)
+          << ", " << invAt(n, i, r * 4 + 2, live) << ", " << invAt(n, i, r * 4 + 3, live)
+          << "), float4(" << src << ", 1.0))" << (r < 2 ? ", " : "");
     }
     o << ");\n";
 
     o << "    float " << var << " = (";
     switch (static_cast<makina::EvalOp>(n.op)) {
         case makina::EvalOp::Sphere:
-            o << "mkSdSphere(" << p << ".x, " << p << ".y, " << p << ".z, " << flt(n.params[0])
+            o << "mkSdSphere(" << p << ".x, " << p << ".y, " << p << ".z, " << paramAt(n, i, 0, live)
               << ")";
             break;
         case makina::EvalOp::BoxCentered:
             o << "mkSdBoxCentered(" << p << ".x, " << p << ".y, " << p << ".z, "
-              << flt(n.params[0]) << ", " << flt(n.params[1]) << ", " << flt(n.params[2]) << ")";
+              << paramAt(n, i, 0, live) << ", " << paramAt(n, i, 1, live) << ", " << paramAt(n, i, 2, live) << ")";
             break;
         case makina::EvalOp::CylinderCentered:
             o << "mkSdCylinderCentered(" << p << ".x, " << p << ".y, " << p << ".z, "
-              << flt(n.params[0]) << ", " << flt(n.params[1]) << ")";
+              << paramAt(n, i, 0, live) << ", " << paramAt(n, i, 1, live) << ")";
             break;
         case makina::EvalOp::ConeCentered:
-            o << "mkSdConeCentered(" << p << ".x, " << p << ".y * " << flt(n.params[2]) << ", "
-              << p << ".z, " << flt(n.params[0]) << ", " << flt(n.params[1]) << ")";
+            o << "mkSdConeCentered(" << p << ".x, " << p << ".y * " << paramAt(n, i, 2, live) << ", "
+              << p << ".z, " << paramAt(n, i, 0, live) << ", " << paramAt(n, i, 1, live) << ")";
             break;
         case makina::EvalOp::Torus:
-            o << "mkSdTorus(" << p << ".x, " << p << ".y, " << p << ".z, " << flt(n.params[0])
-              << ", " << flt(n.params[1]) << ")";
+            o << "mkSdTorus(" << p << ".x, " << p << ".y, " << p << ".z, " << paramAt(n, i, 0, live)
+              << ", " << paramAt(n, i, 1, live) << ")";
             break;
         case makina::EvalOp::Sor:
             // The helper carries this node's inlined polyline; the correction multiply below
@@ -118,17 +142,17 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalProgram&
         // the identity and the shared tail stays shared.
         case makina::EvalOp::BlobSphere:
             o << "mkBlobSphereDensity(" << p << ".x, " << p << ".y, " << p << ".z, "
-              << flt(n.params[0]) << ", " << flt(n.params[1]) << ")";
+              << paramAt(n, i, 0, live) << ", " << paramAt(n, i, 1, live) << ")";
             break;
         case makina::EvalOp::BlobCylinder:
             o << "mkBlobCylinderDensity(" << p << ".x, " << p << ".y, " << p << ".z, "
-              << flt(n.params[0]) << ", " << flt(n.params[1]) << ", " << flt(n.params[2]) << ")";
+              << paramAt(n, i, 0, live) << ", " << paramAt(n, i, 1, live) << ", " << paramAt(n, i, 2, live) << ")";
             break;
         default:
             o << "mkSdPlane(" << p << ".y, 0.0)";
             break;
     }
-    o << ") * " << flt(n.params[3]) << ";\n";
+    o << ") * " << paramAt(n, i, 3, live) << ";\n";
     const bool density = n.op == static_cast<std::uint32_t>(makina::EvalOp::BlobSphere) ||
                          n.op == static_cast<std::uint32_t>(makina::EvalOp::BlobCylinder);
     if (warped && !density) {
@@ -142,9 +166,9 @@ inline void emitPrimitiveLines(std::ostringstream& o, const makina::EvalProgram&
 /// the distance to it, larger wins -- the same two bounds evalBlobFinish takes on the CPU.
 inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalProgram& prog,
                                 const makina::EvalNode& n, std::size_t i, const char* prefix,
-                                const std::string& field, const std::string& var) {
-    const std::string d = "(" + flt(n.params[0]) + " - " + field + ") / " + flt(n.params[1]) +
-                          " * " + flt(n.params[3]);
+                                const std::string& field, const std::string& var, bool live) {
+    const std::string d = "(" + paramAt(n, i, 0, live) + " - " + field + ") / " +
+                          paramAt(n, i, 1, live) + " * " + paramAt(n, i, 3, live);
     if (n.params[2] <= 0.0f) {
         o << "    float " << var << " = " << d << ";\n";
         return;
@@ -157,16 +181,16 @@ inline void emitBlobFinishLines(std::ostringstream& o, const makina::EvalProgram
     const std::string q = std::string(prefix) + "q" + std::to_string(i);
     o << "    float3 " << q << " = float3(";
     for (int r = 0; r < 3; ++r) {
-        o << "dot(float4(" << flt(n.inv[r * 4 + 0]) << ", " << flt(n.inv[r * 4 + 1]) << ", "
-          << flt(n.inv[r * 4 + 2]) << ", " << flt(n.inv[r * 4 + 3]) << "), float4(" << src
-          << ", 1.0))" << (r < 2 ? ", " : "");
+        o << "dot(float4(" << invAt(n, i, r * 4 + 0, live) << ", " << invAt(n, i, r * 4 + 1, live)
+          << ", " << invAt(n, i, r * 4 + 2, live) << ", " << invAt(n, i, r * 4 + 3, live)
+          << "), float4(" << src << ", 1.0))" << (r < 2 ? ", " : "");
     }
     o << ");\n";
     // Strictly outside the box only, same guard as evalBlobFinish: within it the box term is
     // zero or negative and must not pass through the max.
     const std::string b = q + "b";
     o << "    float " << b << " = (max(max(abs(" << q << ".x), abs(" << q << ".y)), abs(" << q
-      << ".z)) - 1.0) * " << flt(n.params[2]) << ";\n";
+      << ".z)) - 1.0) * " << paramAt(n, i, 2, live) << ";\n";
     o << "    float " << var << " = " << b << " > 0.0 ? max(" << d << ", " << b << ") : (" << d
       << ");\n";
 }
@@ -321,7 +345,7 @@ inline std::string generateSweepHelpers(const makina::EvalProgram& prog) {
     return o.str();
 }
 
-inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
+inline std::string generateEvalCsg(const makina::EvalProgram& prog, bool live = false) {
     std::ostringstream o;
     o << "// Generated for this scene. Do not edit.\n"
       << "float evalCsg(float3 wp) {\n";
@@ -346,7 +370,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
                                          "field to close");
             }
             const std::string field = stack.back();  stack.pop_back();
-            detail::emitBlobFinishLines(o, prog, n, i, "", field, var);
+            detail::emitBlobFinishLines(o, prog, n, i, "", field, var, live);
             stack.push_back(var);
             continue;
         }
@@ -369,7 +393,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
             continue;
         }
 
-        detail::emitPrimitiveLines(o, prog, n, i, "");
+        detail::emitPrimitiveLines(o, prog, n, i, "", live);
         stack.push_back(var);
     }
 
@@ -396,7 +420,7 @@ inline std::string generateEvalCsg(const makina::EvalProgram& prog) {
 ///   Difference    **always the left operand's**, even where the visible surface is the cut.
 ///                 This is POV-Ray's cutaway_textures answer and Grasp3D's, and it has to match
 ///                 or the export and the picture would paint the inside of a hole differently.
-inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
+inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog, bool live = false) {
     std::ostringstream o;
     o << "// Generated for this scene. Do not edit.\n"
       << "// x = distance, y = material (255 = none), z = pigment (-1 = none)\n"
@@ -423,7 +447,7 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
             // The finish node is the blob's one surface, so it carries the material; the
             // density leaves below it never win a comparison.
             const std::string dist = var + "d";
-            detail::emitBlobFinishLines(o, prog, n, i, "m", field + ".x", dist);
+            detail::emitBlobFinishLines(o, prog, n, i, "m", field + ".x", dist, live);
             o << "    float3 " << var << " = float3(" << dist << ", "
               << detail::flt(static_cast<float>(n.materialId)) << ", "
               << detail::flt(n.pigmentId == makina::kNoPigment
@@ -461,7 +485,7 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
 
         // Same emitter as evalCsg, so the distance a material is attached to is the one the march
         // actually walked. Copying the expressions here instead would let the two drift.
-        detail::emitPrimitiveLines(o, prog, n, i, "m");
+        detail::emitPrimitiveLines(o, prog, n, i, "m", live);
         // The pigment index rides beside the material so a surface can find both the pattern
         // it wears and the space that pattern is nailed to. The material alone cannot say the
         // second: two walls sharing one checker but standing apart need different entries.
@@ -484,8 +508,13 @@ inline std::string generateEvalCsgMaterial(const makina::EvalProgram& prog) {
 /// shadingInclude selects the look: "scene_shading.hlsl" is the plain clay pass used to check the
 /// geometry, "scene_weathered.hlsl" the procedural wear the demo is about. Both consume the same
 /// generated evalCsg, so a difference between the two images can only be shading.
+/// `live` (D-15): the leaf numbers are read from the program buffer instead of being baked in,
+/// so one compiled shader serves every pose of this tree -- the engine uploads
+/// flatten(sampleAt(t)) each frame. Structure only: a program whose node count or ops differ
+/// from the one this was generated for must not be uploaded to it (CsgBake checks the count).
 inline std::string generateShader(const makina::EvalProgram& prog,
-                                  const std::string& shadingInclude, bool interpret = false) {
+                                  const std::string& shadingInclude, bool interpret = false,
+                                  bool live = false) {
     std::ostringstream o;
     // The smallest distance correction any leaf carries, defined before the prelude so its
     // fallback of 1 does not win. The field is a lower bound scaled by it (a warp's 1/L, a
@@ -510,8 +539,11 @@ inline std::string generateShader(const makina::EvalProgram& prog,
         // every scene and nothing needs compiling when the model changes.
         o << "#include \"scene_interpret.hlsl\"\n\n";
     } else {
-        o << generateSorHelpers(prog) << generateSweepHelpers(prog) << generateEvalCsg(prog)
-          << "\n" << generateEvalCsgMaterial(prog) << "\n";
+        if (live) {
+            o << "#include \"scene_program.hlsl\"\n\n";
+        }
+        o << generateSorHelpers(prog) << generateSweepHelpers(prog) << generateEvalCsg(prog, live)
+          << "\n" << generateEvalCsgMaterial(prog, live) << "\n";
     }
     o << "#include \"" << shadingInclude << "\"\n";
     return o.str();

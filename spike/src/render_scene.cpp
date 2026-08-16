@@ -289,7 +289,7 @@ struct CompiledShader {
 CompiledShader compileScene(const makina::EvalProgram& prog, const std::string& shaderDir,
                             const std::string& coreInclude, const std::string& outDir,
                             const std::string& tag, const std::string& shadingInclude,
-                            bool interpret) {
+                            bool interpret, bool live) {
     const std::string hlsl = outDir + "/scene_" + tag + ".hlsl";
     const std::string log = outDir + "/scene_" + tag + ".log";
 
@@ -298,7 +298,7 @@ CompiledShader compileScene(const makina::EvalProgram& prog, const std::string& 
         if (!out) {
             throw std::runtime_error("could not write the generated shader to '" + hlsl + "'");
         }
-        out << spike::generateShader(prog, shadingInclude, interpret);
+        out << spike::generateShader(prog, shadingInclude, interpret, live);
     }
 
     CompiledShader r;
@@ -374,6 +374,10 @@ int main(int argc, char** argv) {
     // shader is the same for every scene -- which is what a runtime that cannot ship a shader
     // compiler needs (PLAN.md D-04).
     bool interpret = false;
+    // Live (D-15): the generated shader reads its numbers from the program buffer. Its picture
+    // must be the baked one to the byte -- the buffer is uploaded either way -- which is what
+    // live-check pairs.
+    bool live = false;
     std::vector<std::string> scenes;
 
     for (int i = 1; i < argc; ++i) {
@@ -387,6 +391,7 @@ int main(int argc, char** argv) {
         else if (a == "--mask") { shading = "scene_mask.hlsl"; prefix = "mask"; writePov = true; }
         else if (a == "--pov-match") { prefix = "shaded"; writePov = true; povMatch = true; }
         else if (a == "--interpret") { interpret = true; prefix = "interp"; }
+        else if (a == "--live") { live = true; prefix = "live"; }
         else if (a == "--camera" && i + 1 < argc) {
             const std::string k = argv[++i];
             if (k == "perspective")           { cameraKind = 0; }
@@ -513,7 +518,7 @@ int main(int argc, char** argv) {
                 }
                 const CompiledShader shader =
                     compileScene(prog, SPIKE_SHADER_DIR, MAKINA_CORE_INCLUDE, exeDir, tag, shading,
-                                 interpret);
+                                 interpret, live);
 
                 const std::vector<char> vs = readBinary(shader.vsPath);
                 const std::vector<char> ps = readBinary(shader.psPath);

@@ -98,6 +98,12 @@ if errorlevel 1 (
     if errorlevel 1 set FAILED=1
 
     echo.
+    echo    the baked shader against the live one (D-15: numbers from the buffer)
+    echo.
+    call "%HERE%spike\live-check.bat"
+    if errorlevel 1 set FAILED=1
+
+    echo.
     echo    the baked DXIL against what the modeller compiles
     echo.
     call "%HERE%spike\bake-check.bat"

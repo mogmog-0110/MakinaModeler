@@ -15,6 +15,7 @@
 
 #include <cstring>
 #include <stdexcept>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -391,7 +392,11 @@ inline void parseSceneInto(Scene& s, const std::string& text) {
                              std::to_string(kSceneFormatVersion) + ")");
     }
 
-    s = Scene{};
+    // Reset from a blank kept on the heap. `s = Scene{}` would materialise a 400 KB temporary
+    // on the stack, which is the very thing parseSceneInto exists to spare its caller: the
+    // engine loads a solid on a thread with the default 1 MB and overflowed on exactly that.
+    static const std::unique_ptr<const Scene> kBlank = std::make_unique<Scene>();
+    s = *kBlank;
     s.nextId = j.value("nextId", 1u);
 
     if (j.contains("materials") && j["materials"].is_array()) {

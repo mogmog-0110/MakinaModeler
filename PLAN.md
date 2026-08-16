@@ -574,11 +574,21 @@ L が角の分だけ（√3 倍）過大になる。
 最終フレームが CPU 評価と輪郭で一致する。
 
 **完了条件**:
-- [ ] Joint ノード（追加・JSON・平坦化・POV 出力）、warp_check 相当の門
-- [ ] Track / sampleAt と補間の単体テスト、JSON 往復
-- [ ] ビューポートで再生・スクラブ・キー打ち、viewport-check にケース
-- [ ] エンジンで動く（構造特殊化 DXIL + 毎フレーム upload）、mitiru_host の連番 PNG で動きと一致を検査
-- [ ] 腕のデモを docs/images に 3 フレーム
+- [x] Joint ノード（追加・JSON・平坦化・POV 出力）、animation_check が三変換綴りと 0.00e+00 で一致
+- [x] Track / sampleAt と補間の単体テスト、JSON 往復（animation_check 23 件）
+- [x] ビューポートで再生・スクラブ・キー打ち、viewport-check に motion（スクラブで絵が変わる・欄が
+      サンプル値と keyed を読む・再生で時刻が進む・edit.key が保存シーンにトラックを書く・ページの再生
+      ボタン）。キーは command 層の `key` を通り、keymap_audit が edit.key ↔ key を見る
+- [x] エンジンで動く: `makina_bake --live` が構造だけ特殊化した DXIL を焼き（葉の数値は t0 の
+      プログラムバッファから読む、live-check が焼き込み版と 18 シーン byte 一致）、CsgSolid::programAt(t)
+      が flatten(sampleAt(t)) を毎フレーム載せる。TestCsgRenderPass「a live bake moves with the time」が
+      t=0/1 で絵が変わり t=2 で戻り、t=1 の輪郭が CPU の posed 距離場と 98% 以上一致することを見る。
+      csg_solid 章に腕を置き mitiru_host の連番 PNG で確認（docs/images/arm_engine.png）
+- [x] 腕のデモを docs/images に 3 フレーム（arm_engine.png、arm_viewport_t1.png）
+
+**残した穴**（次の段の候補）: warp の率（twist の degreesPerUnit 等）と sor / sweep の点列は live でも
+リテラルのまま — 関節の角度と葉のパラメータだけが動く。エンジンの CPU 距離場（raycast / 当たり）は休止
+姿勢のまま; 動く当たりが要るなら CsgSolid の posed シーンに対して同じ関数を呼ぶ。
 
 ---
 

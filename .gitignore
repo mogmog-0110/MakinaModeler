@@ -31,6 +31,8 @@ tools/*/out/
 # Rendered images
 *.bmp
 *.png
+# The demo pictures the docs point at are the exception: small, and the whole point of them.
+!docs/images/*.png
 
 # POV-Ray output
 *.pov
