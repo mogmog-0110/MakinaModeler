@@ -108,6 +108,11 @@ inline const std::vector<std::string>& knownActions() {
         // rest. Scrubbing rides the shell's slider only; a key cannot carry a time.
         "anim.play",       "anim.rewind",      "anim.scrub",
         "edit.key",
+        // The file. Save writes the scene back where it was loaded from; export writes the
+        // .pov / .stl / .obj beside it. Neither is an edit (the tree is unchanged), so neither
+        // needs a command. Export has no key in either preset -- Grasp3D's export is a menu
+        // item, and both Maya and Blender put export behind a dialog -- so it is the toolbar's.
+        "file.save",       "file.export",
         "axis.x",          "axis.y",           "axis.z",
         "snap.hold",
     };
@@ -361,6 +366,7 @@ inline const char* mayaKeymapJson() {
     { "action": "edit.redo",      "key": "Y", "modifiers": ["ctrl"] },
     { "action": "anim.play",      "key": "SPACE" },
     { "action": "edit.key",       "key": "K" },
+    { "action": "file.save",      "key": "S", "modifiers": ["ctrl"] },
 
     { "action": "axis.x", "key": "X", "context": "transform" },
     { "action": "axis.y", "key": "Y", "context": "transform" },
@@ -408,6 +414,7 @@ inline const char* blenderKeymapJson() {
     { "action": "edit.redo",      "key": "Z", "modifiers": ["ctrl", "shift"] },
     { "action": "anim.play",      "key": "SPACE" },
     { "action": "edit.key",       "key": "K" },
+    { "action": "file.save",      "key": "S", "modifiers": ["ctrl"] },
 
     { "action": "axis.x", "key": "X", "context": "transform" },
     { "action": "axis.y", "key": "Y", "context": "transform" },

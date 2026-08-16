@@ -27,7 +27,9 @@
 #include <makina/Edit.hpp>
 #include <makina/Flatten.hpp>
 #include <makina/Keymap.hpp>
+#include <makina/MeshExport.hpp>
 #include <makina/Pick.hpp>
+#include <makina/Pov.hpp>
 #include <makina/Selection.hpp>
 #include <makina/RenderMaterial.hpp>
 #include <makina/History.hpp>
@@ -647,6 +649,11 @@ int main(int argc, char** argv) {
             for (const std::string& action : makina::knownActions()) {
                 shell.accept(action);
             }
+            // The shell's own envelopes (tools/shell_audit.py): the camera <select> sends
+            // shell.setCamera with the chosen view's action as its value, and the distance
+            // field is a number for the camera rather than for a node.
+            shell.accept("shell.setCamera");
+            shell.accept("input:view.distance");
             // And every parameter name any op has. A property field dispatches
             // `input:<key>` -- the row rewrites its own data-m-input so the key rides in the
             // name -- so the set of names to accept is exactly the set of names Op.hpp knows.
@@ -882,6 +889,38 @@ int main(int argc, char** argv) {
                         handled = true;
                     }
 
+                    // The camera dropdown: the value is the action to take, so it rides the key
+                    // path like the toolbar's view buttons would.
+                    if (!handled && pendingAction == "shell.setCamera" && !pendingPayload.empty()) {
+                        nlohmann::json parsed = nlohmann::json::parse(pendingPayload, nullptr,
+                                                                      false);
+                        const std::string view = parsed.is_string() ? parsed.get<std::string>()
+                                                                    : pendingPayload;
+                        if (view.rfind("view.", 0) == 0) {
+                            in.keysPressed.push_back("@" + view);
+                        }
+                        handled = true;
+                    }
+                    // The distance field: Grasp3D's camera panel has one, and typing a number
+                    // there is the one precise way to place the eye. Orthographic height follows
+                    // so the switch between the two projections keeps its "same apparent size".
+                    if (!handled && pendingAction == "input:view.distance") {
+                        nlohmann::json parsed = nlohmann::json::parse(pendingPayload, nullptr,
+                                                                      false);
+                        const std::string text =
+                            parsed.is_discarded() ? std::string()
+                                                  : parsed.value("value", std::string());
+                        char* end = nullptr;
+                        const double d = std::strtod(text.c_str(), &end);
+                        if (end != text.c_str() && *end == '\0' && d > 0.0) {
+                            camera.orthoHeight *= d / camera.distance;
+                            camera.distance = d;
+                            onAxis = false;
+                        } else {
+                            std::printf("'%s' is not a distance\n", text.c_str());
+                        }
+                        handled = true;
+                    }
                     // The timeline's slider: the payload is the time. Scrubbing stops playback,
                     // because a slider that keeps sliding away from where it was put is not one.
                     if (!handled && pendingAction == "anim.scrub" && !pendingPayload.empty()) {
@@ -1375,6 +1414,89 @@ int main(int argc, char** argv) {
                     history.commit(next, "mute " + std::to_string(targets.size()) + " node(s)");
                     std::printf("%d of %zu node(s) now out of the solid\n", muted, targets.size());
                     rebuild();
+                    continue;
+                }
+                if (action == "file.save") {
+                    std::ofstream out(scenePath, std::ios::binary);
+                    if (!out) {
+                        std::printf("could not write '%s'\n", scenePath.c_str());
+                    } else {
+                        out << makina::writeScene(history.current());
+                        std::printf("saved %s\n", scenePath.c_str());
+                    }
+                    continue;
+                }
+                if (action == "file.export") {
+                    // Beside the scene, one file per format, from the tree as it stands: the
+                    // .pov through the same writer the POV comparison uses (this camera, the
+                    // scene's lights or one shadowless sun along the viewport's), the .stl
+                    // and .obj from the B-rep tessellation makina_mesh writes.
+                    const std::filesystem::path base =
+                        std::filesystem::path(scenePath).replace_extension();
+                    const makina::Scene solid = makina::withoutMuted(history.current());
+                    makina::PovOptions po;
+                    po.title = base.filename().string();
+                    double eye[3], fwd[3], right[3], up[3];
+                    makina::cameraEye(camera, eye);
+                    makina::cameraForward(camera, fwd);
+                    makina::cameraBasis(camera, right, up);
+                    for (int i = 0; i < 3; ++i) {
+                        po.camera.eye[i] = eye[i];
+                        po.camera.lookAt[i] = eye[i] + fwd[i];
+                        po.camera.up[i] = up[i];
+                    }
+                    po.camera.fovY = camera.fovY;
+                    po.camera.aspect = aspect;
+                    po.camera.kind = camera.orthographic ? makina::PovCameraKind::Orthographic
+                                                         : makina::PovCameraKind::Perspective;
+                    po.camera.orthoHalfWidth = camera.orthoHeight * aspect;
+                    po.preamble = "global_settings{ assumed_gamma 1.0 }\n";
+                    if (solid.lights.count > 0) {
+                        po.preamble += makina::detail::povLights(solid);
+                    } else {
+                        char sun[160];
+                        std::snprintf(sun, sizeof(sun),
+                                      "light_source{\n\t<%.9g, %.9g, %.9g>\n"
+                                      "\tcolor rgb<1,1,1>\n\tshadowless\n}\n",
+                                      0.45 * 1.0e4, 0.78 * 1.0e4, 0.44 * 1.0e4);
+                        po.preamble += sun;
+                    }
+                    const auto write = [](const std::filesystem::path& p, const char* data,
+                                          std::size_t bytes) {
+                        std::ofstream out(p, std::ios::binary);
+                        if (!out) {
+                            std::printf("could not write '%s'\n", p.string().c_str());
+                            return;
+                        }
+                        out.write(data, static_cast<std::streamsize>(bytes));
+                        std::printf("wrote %s\n", p.string().c_str());
+                    };
+                    const std::string pov = makina::writePov(solid, po);
+                    write(std::filesystem::path(base).replace_extension(".pov"), pov.data(),
+                          pov.size());
+                    const makina::TessellationResult mesh = makina::tessellate(solid);
+                    if (mesh.solids.empty()) {
+                        std::printf("no solid form to write as a mesh\n");
+                    } else {
+                        if (!mesh.complete) {
+                            std::printf("warning: no solid form for '%s'; it is missing from "
+                                        "the mesh\n", mesh.missing.c_str());
+                        }
+                        const std::string name = base.filename().string();
+                        const std::vector<char> stl = makina::writeStl(mesh, name);
+                        write(std::filesystem::path(base).replace_extension(".stl"), stl.data(),
+                              stl.size());
+                        const std::filesystem::path objPath =
+                            std::filesystem::path(base).replace_extension(".obj");
+                        const std::filesystem::path mtlPath =
+                            std::filesystem::path(base).replace_extension(".mtl");
+                        const makina::ObjExport e =
+                            makina::writeObj(mesh, solid, name, mtlPath.filename().string());
+                        write(objPath, e.obj.data(), e.obj.size());
+                        if (!e.mtl.empty()) {
+                            write(mtlPath, e.mtl.data(), e.mtl.size());
+                        }
+                    }
                     continue;
                 }
                 if (action == "anim.play") {

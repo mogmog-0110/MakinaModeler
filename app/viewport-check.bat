@@ -313,6 +313,48 @@ if errorlevel 1 (
     set FAILED=1
 )
 
+REM The rest of the toolbar (things Grasp3D's bar has that were drawn and dead until now):
+REM   camera   the <select> sends shell.setCamera with the view's action as its value; that
+REM            road must land on the same picture as the action itself.
+REM   distance the number typed into the toolbar's field is the camera's distance. (758,15)
+REM            is the field, read off the rendered bar; the state must read it back.
+REM   export   file.export writes .pov / .stl / .obj beside the scene, so it runs on a copy.
+REM   save     file.save writes the tree back to the file it came from; after a delete the
+REM            copy must differ from the original.
+echo    camera envelope
+call :actshot camenv "shell.setCamera=view.front"
+call :samePic camfront camenv "the camera dropdown has to land on the same picture as view.front"
+echo    distance
+"%EXE%" "%SCENE%" --frames 200 --click "758,15" --text "9" --dump-state "%OUT%\dist.json" ^
+    >"%OUT%\dist.log" 2>&1
+"%EXE%" "%SCENE%" --frames 200 --dump-state "%OUT%\distBase.json" >"%OUT%\distBase.log" 2>&1
+findstr /C:"view.distance" "%OUT%\distBase.json" > "%OUT%\distBase.line" 2>nul
+findstr /C:"view.distance" "%OUT%\dist.json" > "%OUT%\dist.line" 2>nul
+REM The click lands a caret in the field and the digit joins what is there, so what the state
+REM must show is a distance that is not the one it started with -- not a particular number.
+fc "%OUT%\distBase.line" "%OUT%\dist.line" >nul 2>&1
+if not errorlevel 1 (
+    echo       FAILED [dist]: the distance typed into the toolbar has to reach the camera
+    set FAILED=1
+)
+echo    export
+copy /y "%SCENE%" "%OUT%\exp.makina.json" >nul
+"%EXE%" "%OUT%\exp.makina.json" --no-shell --actions "file.export" --frames 40 >"%OUT%\export.log" 2>&1
+for %%e in (pov stl obj) do (
+    if not exist "%OUT%\exp.%%e" (
+        echo       FAILED [export]: file.export did not write exp.%%e
+        set FAILED=1
+    )
+)
+echo    save
+"%EXE%" "%OUT%\exp.makina.json" --no-shell --select 13 --actions "edit.delete file.save" --frames 40 ^
+    >"%OUT%\save.log" 2>&1
+fc /b "%SCENE%" "%OUT%\exp.makina.json" >nul 2>&1
+if not errorlevel 1 (
+    echo       FAILED [save]: file.save after a delete left the file as it was loaded
+    set FAILED=1
+)
+
 REM Isolate: only the selected subtree in the picture, and a way back.
 REM
 REM Three shots with the same selection. The base and the isolated one must differ (otherwise
