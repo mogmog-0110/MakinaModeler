@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "Animation.hpp"
 #include "Edit.hpp"
 #include "Transform.hpp"
 #include "History.hpp"
@@ -341,8 +342,50 @@ inline CommandResult runCommand(History& history, const nlohmann::json& cmd) {
         return r;
     }
 
+    if (op == "key") {
+        // A keyframe (PLAN.md D-15): the named parameter's value at a time. Without "value" the
+        // node's current value is keyed, which is how the viewport's K works -- pose, then key.
+        // Here for the same reason mute is: the viewport can key, so a script must be able to.
+        const std::uint32_t id = cmd.value("id", 0u);
+        const std::uint16_t index = indexOfId(s, id);
+        if (index == kNoChild) {
+            r.message = "no node with id " + std::to_string(id);
+            return r;
+        }
+        const Op nodeOp = static_cast<Op>(s.nodes[index].op);
+        const std::string param = cmd.value("param", std::string());
+        const int slot = paramIndexOf(nodeOp, param.c_str());
+        if (slot < 0) {
+            r.message = "op '" + std::string(opName(nodeOp)) + "' has no parameter '" + param +
+                        "'; it takes " + detail::keyList(nodeOp);
+            return r;
+        }
+        if (!cmd.contains("time") || !cmd["time"].is_number()) {
+            r.message = "key needs a numeric \"time\"";
+            return r;
+        }
+        const float t = cmd["time"].get<float>();
+        const float value = cmd.contains("value") && cmd["value"].is_number()
+                                ? cmd["value"].get<float>()
+                                : s.nodes[index].params[slot];
+        const TrackInterp interp = cmd.value("interp", std::string("linear")) == "catmullrom"
+                                       ? TrackInterp::CatmullRom
+                                       : TrackInterp::Linear;
+        Scene next = s;
+        if (!setKey(next, id, static_cast<std::uint8_t>(slot), t, value, interp)) {
+            r.message = "no room for another key: " + std::to_string(Track::kMaxKeys) +
+                        " per track, " + std::to_string(Scene::kMaxTracks) + " tracks";
+            return r;
+        }
+        history.commit(next, "key " + param + " on id " + std::to_string(id));
+        r.ok = true;
+        r.message = "keyed " + param + " = " + std::to_string(value) + " at t=" +
+                    std::to_string(t);
+        return r;
+    }
+
     r.message = "unknown command '" + op + "'; expected one of add, remove, duplicate, move, "
-                "translate, rotate, scale, set, rename, material, mute, undo, redo";
+                "translate, rotate, scale, set, rename, material, mute, key, undo, redo";
     return r;
 }
 

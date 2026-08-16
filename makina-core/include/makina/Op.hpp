@@ -214,6 +214,18 @@ inline const char* opName(Op op) {
     return e ? e->name : "Unsupported";
 }
 
+/// The params[] slot a name means on this op, or -1 when the op has no such parameter. The one
+/// place a scene file, a command and a track resolve "degree" to a slot, so all three agree.
+inline int paramIndexOf(Op op, const char* name) {
+    const OpEntry* e = findOp(op);
+    for (int k = 0; e != nullptr && k < 12 && e->keys[k] != nullptr; ++k) {
+        if (std::strcmp(e->keys[k], name) == 0) {
+            return k;
+        }
+    }
+    return -1;
+}
+
 /// Number of params[] slots this op uses. 0 for structural and boolean nodes.
 inline int paramCount(Op op) {
     const OpEntry* e = findOp(op);

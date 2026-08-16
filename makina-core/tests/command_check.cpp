@@ -182,6 +182,35 @@ void exercise(const std::string& path) {
     r = makina::runCommand(history, json{{"op", "mute"}, {"id", rootId}});
     check(!r.ok, "muting the root was accepted");
 
+    // Keying (D-15), for the same reason as mute: the viewport's K goes through here. A key
+    // without a value takes the node's current one; a parameter the op lacks is refused by name.
+    r = makina::runCommand(history, json{{"op", "add"},
+                                         {"parent", rootId},
+                                         {"node", json{{"op", "Joint"}, {"degree", 30.0}}}});
+    check(r.ok, "add joint: " + r.message);
+    const std::uint32_t jointId = r.newId;
+    r = makina::runCommand(history, json{{"op", "key"}, {"id", jointId}, {"param", "degree"},
+                                         {"time", 0.0}});
+    check(r.ok, "key without a value: " + r.message);
+    r = makina::runCommand(history, json{{"op", "key"}, {"id", jointId}, {"param", "degree"},
+                                         {"time", 1.0}, {"value", 90.0}});
+    check(r.ok, "key with a value: " + r.message);
+    {
+        const makina::Scene& s = history.current();
+        check(s.tracks.count == 1 && s.tracks[0].keyCount == 2 && s.tracks[0].value[0] == 30.0f &&
+                  s.tracks[0].value[1] == 90.0f,
+              "key: one track of two keys, the first at the node's own value");
+    }
+    r = makina::runCommand(history, json{{"op", "key"}, {"id", jointId}, {"param", "radius"},
+                                         {"time", 0.0}});
+    check(!r.ok, "keying a parameter a Joint lacks was accepted");
+    r = makina::runCommand(history, json{{"op", "key"}, {"id", jointId}, {"param", "degree"}});
+    check(!r.ok, "keying without a time was accepted");
+    r = makina::runCommand(history, json{{"op", "undo"}});
+    r = makina::runCommand(history, json{{"op", "undo"}});
+    r = makina::runCommand(history, json{{"op", "undo"}});
+    check(history.current().tracks.count == 0, "undo did not take the keys back");
+
     // A batch stops at the first failure rather than applying the rest.
     const std::uint32_t beforeBatch = history.current().nodes.count;
     const auto batch = makina::runCommands(

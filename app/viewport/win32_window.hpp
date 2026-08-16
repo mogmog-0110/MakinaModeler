@@ -278,6 +278,7 @@ private:
             case VK_DECIMAL: return "NUMPADPERIOD";
             case VK_DIVIDE:  return "NUMPADSLASH";
             case VK_HOME:    return "HOME";
+            case VK_SPACE:   return "SPACE";
             case VK_DELETE:  return "DELETE";
             case VK_ESCAPE:  return "ESCAPE";
             case VK_RETURN:  return "ENTER";

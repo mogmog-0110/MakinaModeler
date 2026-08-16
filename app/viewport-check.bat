@@ -271,6 +271,48 @@ if not errorlevel 1 (
     set FAILED=1
 )
 
+REM Motion (D-15), on the arm fixture: an elbow keyed 0 / -90 / 0 over two seconds.
+REM   scrub  the slider's road (anim.scrub=t) must pose the arm: the picture at t=1 differs
+REM          from t=0, and the panel reads the sampled degree (-90), marked keyed.
+REM   play   anim.play must move the playhead: after 60 frames the time is no longer 0.
+REM   key    edit.key=<param> at a scrubbed time must land a key the saved scene names.
+REM Read from the state and the saved scene where the fact is about numbers, and from the
+REM picture only for "did it move".
+set ARM=%HERE%..\makina-core\tests\scenes\arm.makina.json
+echo    motion
+"%EXE%" "%ARM%" --no-shell --select 4 --frames 40 --screenshot "%OUT%\armT0.ppm" ^
+    --dump-state "%OUT%\armT0.json" >"%OUT%\armT0.log" 2>&1
+"%EXE%" "%ARM%" --no-shell --select 4 --actions "anim.scrub=1" --frames 40 ^
+    --screenshot "%OUT%\armT1.ppm" --dump-state "%OUT%\armT1.json" >"%OUT%\armT1.log" 2>&1
+call :diffPic armT0 armT1 "scrubbing to t=1 has to bend the elbow in the picture"
+call :inFile armT1 "view.anim.time.: .1." "the playhead has to read 1 after anim.scrub=1"
+call :inFile armT1 "key.:.degree.,.label.:.degree.,.value.:.-90.,.keyed.:true" "the panel has to show the sampled degree, marked keyed"
+"%EXE%" "%ARM%" --no-shell --select 4 --actions "anim.play" --frames 60 ^
+    --dump-state "%OUT%\armPlay.json" >"%OUT%\armPlay.log" 2>&1
+call :inFile armPlay "view.anim.playing.: .1." "anim.play has to start playback"
+findstr /R /C:"view.anim.time.: .0.," "%OUT%\armPlay.json" >nul 2>&1
+if not errorlevel 1 (
+    echo       FAILED [armPlay]: 60 frames of playback left the playhead at 0
+    set FAILED=1
+)
+REM And the button on the page: (50,687) is the timeline's play control. Same fact as above,
+REM reached through the shell rather than the marker, so the strip is known to be wired.
+"%EXE%" "%ARM%" --select 4 --frames 200 --click "50,687" --dump-state "%OUT%\armBtn.json" ^
+    >"%OUT%\armBtn.log" 2>&1
+call :inFile armBtn "view.anim.playing.: .1." "the play button on the page has to start playback"
+"%EXE%" "%ARM%" --no-shell --select 4 --actions "anim.scrub=0.5 edit.key=pivotY" --frames 40 ^
+    --save "%OUT%\armKey.json" >"%OUT%\armKey.log" 2>&1
+findstr /C:"\"param\": \"pivotY\"" "%OUT%\armKey.json" >nul 2>&1
+if errorlevel 1 (
+    echo       FAILED [armKey]: edit.key=pivotY did not write a pivotY track into the scene
+    set FAILED=1
+)
+findstr /C:"0.5," "%OUT%\armKey.json" >nul 2>&1
+if errorlevel 1 (
+    echo       FAILED [armKey]: the key did not land at the scrubbed time 0.5
+    set FAILED=1
+)
+
 REM Isolate: only the selected subtree in the picture, and a way back.
 REM
 REM Three shots with the same selection. The base and the isolated one must differ (otherwise

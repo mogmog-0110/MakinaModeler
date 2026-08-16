@@ -65,17 +65,18 @@
      以前は取る側を部品名で数え上げていて、`.tree` が抜けていた。ツリーの行はきちんと
      描画され、ハイライトも C++ から届き、**クリックだけが素通りしていた**。板を 1 枚
      足すたびにこの一覧を直す設計は、いつか同じことをする。 */
-  .bar, .tree, .prop, .status { pointer-events: auto; }
+  .bar, .tree, .prop, .time, .status { pointer-events: auto; }
   .view { pointer-events: none; }
 
   .frame {
     position: absolute; inset: 0;
     display: grid;
-    grid-template-rows: 30px 1fr 22px;
+    grid-template-rows: 30px 1fr 24px 22px;
     grid-template-columns: 240px 1fr 260px;
     grid-template-areas:
       "bar  bar   bar"
       "tree view  prop"
+      "time time  time"
       "stat stat  stat";
   }
 
@@ -169,6 +170,34 @@
      どこに打ち込んでいるか分からない入力欄は、打ち込んだ数字がどこへ行ったか分からない
      入力欄である。 */
   .row input:focus { outline: none; border-color: var(--sel); background: #fffbe6; }
+  /* The key button beside a field (PLAN.md D-15). Hollow when the number is still, filled when
+     a track drives it -- the same diamond every timeline tool draws, so it needs no legend. */
+  .row { grid-template-columns: 84px 1fr 16px; }
+  /* min-width: 0, or the input's intrinsic size (about 20 characters) wins over the 1fr track
+     and pushes the diamond out of the panel behind a scrollbar. */
+  .row input { width: 100%; min-width: 0; box-sizing: border-box; }
+  .row .key {
+    width: 14px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-dim); font-size: 12px; cursor: pointer; user-select: none;
+  }
+  .row .key.is-keyed { color: #c8890a; }
+
+  /* --------------------------------------------------------------- timeline */
+  /* One strip: rewind, play/stop, the playhead as a slider, the time. Kept to what D-15 needs
+     to pose and key a joint; a dope sheet is a later stage. */
+  .time {
+    grid-area: time;
+    display: flex; align-items: center; gap: 8px; padding: 0 8px;
+    background: var(--bar); border-top: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .time button {
+    width: 22px; height: 20px; border: 1px solid transparent; border-radius: 3px;
+    background: transparent; cursor: pointer; font-size: 12px; color: var(--ink);
+  }
+  .time button:hover { background: #ffffff; border-color: var(--line); }
+  .time input[type=range] { flex: 1; height: 16px; margin: 0; }
+  .time .clock { min-width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
 
   /* ---------------------------------------------------------------- status */
   .status {
@@ -293,9 +322,21 @@
           <span data-m-text="label"></span>
           <input type="text" data-m-input="" data-m-attr="data-m-input: {key}"
                  data-m-value="value">
+          <span class="key" data-m-class="is-keyed: keyed" title="この値を今の時刻にキーとして打つ (K)"
+                data-m-action="edit.key" data-m-arg="key">&#9670;</span>
         </div>
       </template>
     </div>
+  </div>
+
+  <div class="time">
+    <button data-m-action="anim.rewind" title="先頭へ">&#9198;</button>
+    <button data-m-action="anim.play" title="再生 / 停止 (Space)"><span data-m-hide="view.anim.playing">&#9654;</span><span data-m-show="view.anim.playing">&#9632;</span></button>
+    <!-- The slider is the playhead. Its range is the motion's length, which is 0 for a still
+         scene -- a slider you cannot move is the honest picture of a scene with no keys. -->
+    <input type="range" min="0" step="0.01" data-m-attr="max: {view.anim.length}"
+           data-m-action="anim.scrub" data-m-value="view.anim.time" title="時刻">
+    <span class="clock"><span data-m-text="view.anim.time">0</span> / <span data-m-text="view.anim.length">0</span> s</span>
   </div>
 
   <div class="status">

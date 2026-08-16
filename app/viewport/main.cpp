@@ -20,6 +20,7 @@
 #include "../../spike/src/image_out.hpp"
 #include "../../spike/src/scene_codegen.hpp"
 
+#include <makina/Animation.hpp>
 #include <makina/Bounds.hpp>
 #include <makina/Camera.hpp>
 #include <makina/Command.hpp>
@@ -44,6 +45,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -706,6 +708,13 @@ int main(int argc, char** argv) {
         makina::Scene       previewScene;
         makina::EvalProgram previewProg;
         bool                previewing = false;
+        // The playhead (PLAN.md D-15). Viewport state like the camera: the scene has no time,
+        // and a scene with tracks is shown as `sampleAt(playhead)` down the same interpreted
+        // road a drag uses. `keyOnlyParam` is the panel's diamond naming one field for the next
+        // edit.key; empty means K, which keys every parameter of the selection.
+        float       playhead = 0.0f;
+        bool        playing = false;
+        std::string keyOnlyParam;
 
         std::printf("orbit / pan / dolly per the keymap. F fits the selection, A fits everything.\n");
         std::printf("Escape quits.\n\n");
@@ -741,10 +750,14 @@ int main(int argc, char** argv) {
                 // A scripted "add.<op>" is a toolbar press, so it takes the toolbar's road:
                 // the pending-action branch below, which is where a button's dispatch lands.
                 // Every other action rides the key path, as the marker convention says.
-                if (k.rfind("@add.", 0) == 0) {
+                //
+                // "@name=payload" is a control that carries a value -- the timeline's slider,
+                // the panel's key diamond -- and takes the same road for the same reason.
+                if (k.rfind("@add.", 0) == 0 || (k.rfind('@', 0) == 0 && k.find('=') != std::string::npos)) {
                     std::lock_guard<std::mutex> lock(pendingMutex);
-                    pendingAction = k.substr(1);
-                    pendingPayload.clear();
+                    const std::size_t eq = k.find('=');
+                    pendingAction = k.substr(1, eq == std::string::npos ? std::string::npos : eq - 1);
+                    pendingPayload = eq == std::string::npos ? std::string() : k.substr(eq + 1);
                 } else {
                     in.keysPressed.push_back(k);
                 }
@@ -869,6 +882,29 @@ int main(int argc, char** argv) {
                         handled = true;
                     }
 
+                    // The timeline's slider: the payload is the time. Scrubbing stops playback,
+                    // because a slider that keeps sliding away from where it was put is not one.
+                    if (!handled && pendingAction == "anim.scrub" && !pendingPayload.empty()) {
+                        char* end = nullptr;
+                        const double t = std::strtod(pendingPayload.c_str(), &end);
+                        if (end != pendingPayload.c_str()) {
+                            const float length = makina::animationLength(history.current());
+                            playhead = static_cast<float>(std::clamp(t, 0.0, static_cast<double>(length)));
+                            playing = false;
+                        }
+                        handled = true;
+                    }
+                    // The diamond beside one field: key that parameter only. The name rides to
+                    // the key branch below, which is where K lands too.
+                    if (!handled && pendingAction == "edit.key" && !pendingPayload.empty()) {
+                        nlohmann::json parsed = nlohmann::json::parse(pendingPayload, nullptr,
+                                                                      false);
+                        keyOnlyParam = parsed.is_string() ? parsed.get<std::string>()
+                                                          : pendingPayload;
+                        in.keysPressed.push_back("@edit.key");
+                        handled = true;
+                    }
+
                     // A number typed into the property panel. Straight through the command
                     // layer, so the field and a script take the same road into the tree and
                     // land in the history as one entry each.
@@ -882,10 +918,29 @@ int main(int argc, char** argv) {
                         char* end = nullptr;
                         const double value = std::strtod(text.c_str(), &end);
                         if (end != text.c_str() && *end == '\0') {
+                            // A parameter a track already drives is keyed at the playhead
+                            // rather than set: the panel shows the sampled value, and a "set"
+                            // would change a rest value the track hides -- the number would
+                            // snap back on the next frame and the edit would look lost.
+                            bool keyed = false;
+                            const makina::Scene& cur = history.current();
+                            const std::uint16_t idx = makina::indexOfId(cur, selection.back());
+                            const int slot = idx == makina::kNoChild ? -1
+                                : makina::paramIndexOf(static_cast<makina::Op>(cur.nodes[idx].op), key.c_str());
+                            for (std::uint32_t t = 0; slot >= 0 && t < cur.tracks.count; ++t) {
+                                keyed = keyed || (cur.tracks[t].nodeId == selection.back() &&
+                                                  cur.tracks[t].paramIndex == slot &&
+                                                  cur.tracks[t].keyCount > 0);
+                            }
                             const makina::CommandResult r = makina::runCommand(
-                                history, nlohmann::json{{"op", "set"},
-                                                        {"id", selection.back()},
-                                                        {key, value}});
+                                history, keyed ? nlohmann::json{{"op", "key"},
+                                                                {"id", selection.back()},
+                                                                {"param", key},
+                                                                {"time", playhead},
+                                                                {"value", value}}
+                                               : nlohmann::json{{"op", "set"},
+                                                                {"id", selection.back()},
+                                                                {key, value}});
                             std::printf("%s\n", r.message.c_str());
                             if (r.ok) {
                                 rebuild();
@@ -1322,6 +1377,61 @@ int main(int argc, char** argv) {
                     rebuild();
                     continue;
                 }
+                if (action == "anim.play") {
+                    if (!playing && makina::animationLength(history.current()) <= 0.0f) {
+                        std::printf("nothing to play: the scene has no keys\n");
+                    } else {
+                        playing = !playing;
+                        std::printf(playing ? "play\n" : "stop\n");
+                    }
+                    continue;
+                }
+                if (action == "anim.rewind") {
+                    playhead = 0.0f;
+                    continue;
+                }
+                if (action == "edit.key") {
+                    // The value keyed is the one on screen: the sampled value if a track drives
+                    // the parameter, the rest value otherwise. Through the command layer, one
+                    // history entry per parameter, so undo takes keys back one at a time.
+                    const std::string only = keyOnlyParam;
+                    keyOnlyParam.clear();
+                    if (selection.empty()) {
+                        std::printf("nothing selected to key\n");
+                        continue;
+                    }
+                    const makina::Scene posed = makina::sampleAt(history.current(), playhead);
+                    int keyed = 0;
+                    for (const std::uint32_t id : selection) {
+                        const std::uint16_t idx = makina::indexOfId(posed, id);
+                        if (idx == makina::kNoChild) {
+                            continue;
+                        }
+                        const makina::Op op = static_cast<makina::Op>(posed.nodes[idx].op);
+                        const makina::OpEntry* entry = makina::findOp(op);
+                        for (int pi = 0; entry != nullptr && pi < 12 && entry->keys[pi] != nullptr; ++pi) {
+                            if (!only.empty() && only != entry->keys[pi]) {
+                                continue;
+                            }
+                            const makina::CommandResult r = makina::runCommand(
+                                history, nlohmann::json{{"op", "key"},
+                                                        {"id", id},
+                                                        {"param", entry->keys[pi]},
+                                                        {"time", playhead},
+                                                        {"value", posed.nodes[idx].params[pi]}});
+                            if (r.ok) {
+                                ++keyed;
+                            } else {
+                                std::printf("%s\n", r.message.c_str());
+                            }
+                        }
+                    }
+                    std::printf("keyed %d parameter(s) at t=%.2f\n", keyed, playhead);
+                    if (keyed > 0) {
+                        rebuild();
+                    }
+                    continue;
+                }
                 if (action == "edit.undo") {
                     if (history.undo()) {
                         std::printf("undo\n");
@@ -1402,6 +1512,28 @@ int main(int argc, char** argv) {
                     }
                 } else if (action == "select.clear") {
                     selection.clear();
+                }
+            }
+
+            // --- motion --------------------------------------------------------------------
+            // A scene with tracks is shown posed at the playhead, down the interpreted road a
+            // drag already uses (PLAN.md D-15). A drag in progress wins: its preview is the
+            // picture the hand is watching. Playback runs on frame time and wraps.
+            {
+                const float length = makina::animationLength(history.current());
+                if (playing && length > 0.0f) {
+                    playhead += static_cast<float>(lastFrameMs / 1000.0);
+                    if (playhead > length) {
+                        playhead = std::fmod(playhead, length);
+                    }
+                } else if (length <= 0.0f) {
+                    playing = false;
+                    playhead = 0.0f;
+                }
+                if (!previewing && history.current().tracks.count > 0) {
+                    previewScene = makina::sampleAt(history.current(), playhead);
+                    previewProg = makina::flatten(visible(previewScene));
+                    previewing = !previewProg.nodes.empty();
                 }
             }
 
@@ -1510,14 +1642,18 @@ int main(int argc, char** argv) {
             // written once and end() keeps its single transition to PRESENT.
             shell.record(dev.list(), dev.backBufferRtv(), in.width, in.height);
 
-            // And the state behind them. Built from the tree as it stands after this frame's
-            // edits, which is the tree the picture above was drawn from.
+            // And the state behind them. Built from the tree the picture above was drawn
+            // from -- posed at the playhead when the scene moves, mid-drag when it is being
+            // dragged -- so the numbers in the panel are the numbers on screen.
             {
                 makina::ViewNumbers numbers;
                 numbers.distance = camera.distance;
                 numbers.frameMs = lastFrameMs;
                 numbers.live = transform.active() ? transform.status() : std::string();
-                shell.publish(makina::viewState(history.current(), selection, numbers, collapsed));
+                numbers.time = playhead;
+                numbers.length = makina::animationLength(history.current());
+                numbers.playing = playing;
+                shell.publish(makina::viewState(shown, selection, numbers, collapsed));
             }
 
             dev.end();
@@ -1538,6 +1674,14 @@ int main(int argc, char** argv) {
             numbers.distance = camera.distance;
             numbers.frameMs = lastFrameMs;
             numbers.live = transform.active() ? transform.status() : std::string();
+            numbers.time = playhead;
+            numbers.length = makina::animationLength(history.current());
+            numbers.playing = playing;
+            // The posed tree, as the shell saw it: a scripted check reads the panel's numbers
+            // from here, and they must be the numbers the last frame drew.
+            const makina::Scene& stateOf =
+                history.current().tracks.count > 0 ? makina::sampleAt(history.current(), playhead)
+                                                   : history.current();
 
             std::ofstream out(statePath, std::ios::binary);
             if (!out) {
@@ -1546,7 +1690,7 @@ int main(int argc, char** argv) {
             } else {
                 out << "{";
                 bool first = true;
-                for (const auto& kv : makina::viewState(history.current(), selection, numbers, collapsed)) {
+                for (const auto& kv : makina::viewState(stateOf, selection, numbers, collapsed)) {
                     out << (first ? "" : ",") << "\n  " << makina::detail::jsonQuote(kv.first)
                         << ": ";
                     // A list is already JSON and goes in as it is; anything else is a string.

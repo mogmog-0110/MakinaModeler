@@ -43,6 +43,10 @@ inline const std::vector<std::string>& publishedKeys() {
         "view.status.live",
         "view.status.frame",
         "view.distance",
+        "view.anim.time",
+        "view.anim.length",
+        "view.anim.playing",
+        "view.anim.tracks",
     };
     return kKeys;
 }
@@ -59,7 +63,7 @@ publishedItemFields() {
     static const std::vector<std::pair<std::string, std::vector<std::string>>> kFields = {
         {"view.tree", {"id", "name", "op", "icon", "indent", "selected", "muted", "hasChildren",
                        "collapsed"}},
-        {"view.selection.fields", {"key", "label", "value"}},
+        {"view.selection.fields", {"key", "label", "value", "keyed"}},
     };
     return kFields;
 }
@@ -70,6 +74,11 @@ struct ViewNumbers {
     double      frameMs = 0.0;
     /// Transform.hpp's status() during a drag ("Move Y: 3 (typed)"), empty when nothing is running.
     std::string live;
+    /// The playhead (D-15): where in the motion the picture is, how long the motion is, and
+    /// whether it is running. Viewport state, like the camera; the scene has no time.
+    double      time = 0.0;
+    double      length = 0.0;
+    bool        playing = false;
 };
 
 namespace detail {
@@ -258,6 +267,14 @@ inline void treeRow(const Scene& s, std::uint16_t index, int depth, const Select
         out += "{\"key\":" + detail::jsonQuote(entry->keys[k]);
         out += ",\"label\":" + detail::jsonQuote(entry->keys[k]);
         out += ",\"value\":" + detail::jsonQuote(detail::number(n.params[k]));
+        // Whether a track drives this parameter (D-15), so the panel can mark the number as one
+        // that moves and put a key button beside it.
+        bool keyed = false;
+        for (std::uint32_t t = 0; t < s.tracks.count; ++t) {
+            keyed = keyed || (s.tracks[t].nodeId == n.id && s.tracks[t].paramIndex == k &&
+                              s.tracks[t].keyCount > 0);
+        }
+        out += std::string(",\"keyed\":") + (keyed ? "true" : "false");
         out += "}";
     }
     return out + "]";
@@ -290,6 +307,12 @@ inline void treeRow(const Scene& s, std::uint16_t index, int depth, const Select
     out.emplace_back("view.status.live", numbers.live);
     out.emplace_back("view.status.frame", detail::number(numbers.frameMs) + " ms");
     out.emplace_back("view.distance", detail::number(numbers.distance));
+    out.emplace_back("view.anim.time", detail::number(numbers.time));
+    out.emplace_back("view.anim.length", detail::number(numbers.length));
+    out.emplace_back("view.anim.playing", numbers.playing ? "1" : "");
+    // Keys are the property panel's business: a field with a track shows it. Cheap to compute
+    // and it lets the shell mark "this number is animated" without a second query.
+    out.emplace_back("view.anim.tracks", std::to_string(s.tracks.count));
     return out;
 }
 

@@ -102,6 +102,12 @@ inline const std::vector<std::string>& knownActions() {
         // not what it is, so it lives with the viewport and never touches the scene.
         "tree.toggle",
         "edit.undo",       "edit.redo",
+        // Motion (PLAN.md D-15). Playing, rewinding and scrubbing move the playhead, which is
+        // viewport state like the camera -- the scene does not know what time it is. Keying is
+        // an edit: it writes a track into the scene, so it is paired with a command like the
+        // rest. Scrubbing rides the shell's slider only; a key cannot carry a time.
+        "anim.play",       "anim.rewind",      "anim.scrub",
+        "edit.key",
         "axis.x",          "axis.y",           "axis.z",
         "snap.hold",
     };
@@ -134,6 +140,7 @@ inline const std::vector<std::pair<std::string, std::string>>& editCommands() {
         {"edit.reparent", "move"},
         {"edit.undo", "undo"},
         {"edit.redo", "redo"},
+        {"edit.key", "key"},
     };
     return kPairs;
 }
@@ -352,6 +359,8 @@ inline const char* mayaKeymapJson() {
     { "action": "edit.toggleMute", "key": "H" },
     { "action": "edit.undo",      "key": "Z", "modifiers": ["ctrl"] },
     { "action": "edit.redo",      "key": "Y", "modifiers": ["ctrl"] },
+    { "action": "anim.play",      "key": "SPACE" },
+    { "action": "edit.key",       "key": "K" },
 
     { "action": "axis.x", "key": "X", "context": "transform" },
     { "action": "axis.y", "key": "Y", "context": "transform" },
@@ -397,6 +406,8 @@ inline const char* blenderKeymapJson() {
     { "action": "edit.toggleMute", "key": "H" },
     { "action": "edit.undo",      "key": "Z", "modifiers": ["ctrl"] },
     { "action": "edit.redo",      "key": "Z", "modifiers": ["ctrl", "shift"] },
+    { "action": "anim.play",      "key": "SPACE" },
+    { "action": "edit.key",       "key": "K" },
 
     { "action": "axis.x", "key": "X", "context": "transform" },
     { "action": "axis.y", "key": "Y", "context": "transform" },
