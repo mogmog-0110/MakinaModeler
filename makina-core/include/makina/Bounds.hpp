@@ -111,6 +111,18 @@ inline Mat4 matrixOf(const CsgNode& n) {
     if (isWarp(static_cast<Op>(n.op))) {
         return identityMat();
     }
+    if (static_cast<Op>(n.op) == Op::Joint) {
+        // T(pivot) * R(axis, degree) * T(-pivot): the rotation Rotate would do, moved to the
+        // pivot. Built from a Rotate's own matrix so the two agree about handedness.
+        CsgNode rot = n;
+        rot.op = static_cast<std::uint8_t>(Op::Rotate);
+        rot.params[0] = n.params[3];
+        const Mat4 R = matrixOf(rot);
+        const double px = n.params[0], py = n.params[1], pz = n.params[2];
+        const Mat4 toPivot{{1, 0, 0, px, 0, 1, 0, py, 0, 0, 1, pz, 0, 0, 0, 1}};
+        const Mat4 fromPivot{{1, 0, 0, -px, 0, 1, 0, -py, 0, 0, 1, -pz, 0, 0, 0, 1}};
+        return mulMat(toPivot, mulMat(R, fromPivot));
+    }
     switch (static_cast<Op>(n.op)) {
         case Op::Translate:
             return Mat4{{1, 0, 0, n.params[0],

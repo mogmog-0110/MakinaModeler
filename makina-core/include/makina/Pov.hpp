@@ -251,6 +251,17 @@ inline std::string povTransform(const CsgNode& n) {
     if (op == Op::Scale) {
         return "\tscale" + vec3(q[0], q[1], q[2]) + "\n";
     }
+    if (op == Op::Joint) {
+        // POV applies modifiers top to bottom, so: to the pivot's frame, turn, back. Written as
+        // three plain transforms; POV has no joint and needs none, and the reader takes the three
+        // back as three nodes -- same solid, different tree, which is what the round trip holds.
+        CsgNode rot = n;
+        rot.op = static_cast<std::uint8_t>(Op::Rotate);
+        rot.params[0] = n.params[3];
+        return "\ttranslate " + vec3(-n.params[0], -n.params[1], -n.params[2]) + "\n" +
+               povTransform(rot) + "\ttranslate " + vec3(n.params[0], n.params[1], n.params[2]) +
+               "\n";
+    }
     if (op == Op::Rotate) {
         const std::uint16_t axis = n.flags & flags::kAxisMask;
         const double d = q[0];

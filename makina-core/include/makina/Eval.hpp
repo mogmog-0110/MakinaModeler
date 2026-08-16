@@ -96,6 +96,19 @@ inline double scaleFactorOf(const Scene& s, std::uint16_t index) {
 /// its axis (Warp.hpp freezes the map beyond it), which the scene-aware overload supplies; this
 /// one is for the affine transforms only.
 inline void invApply(const CsgNode& n, const double p[3], double out[3]) {
+    if (static_cast<Op>(n.op) == Op::Joint) {
+        // Undo T(pivot) R T(-pivot): move to the pivot, unrotate, move back.
+        CsgNode rot = n;
+        rot.op = static_cast<std::uint8_t>(Op::Rotate);
+        rot.params[0] = n.params[3];
+        const double q[3] = {p[0] - n.params[0], p[1] - n.params[1], p[2] - n.params[2]};
+        double r[3];
+        invApply(rot, q, r);
+        out[0] = r[0] + n.params[0];
+        out[1] = r[1] + n.params[1];
+        out[2] = r[2] + n.params[2];
+        return;
+    }
     switch (static_cast<Op>(n.op)) {
         case Op::Translate:
             out[0] = p[0] - n.params[0];

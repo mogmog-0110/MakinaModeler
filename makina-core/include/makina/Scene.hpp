@@ -168,6 +168,32 @@ struct NameSlot {
     char text[N]{};
 };
 
+/// One animated parameter (PLAN.md D-15): a node's params[paramIndex] as a function of time.
+///
+/// Keys are (time, value) in ascending time, at most kMaxKeys; between keys the value is
+/// interpolated as `interp` says, and held flat before the first and after the last. That is the
+/// whole of motion here: `sampleAt` writes the sampled value into a copy of the scene and every
+/// evaluator, exporter and gate then sees an ordinary still scene. Time lives in the sampler's
+/// argument, never in the Scene, so rewind and round trip and every comparison keep their
+/// "still scene" footing.
+struct Track {
+    static constexpr int kMaxKeys = 16;
+    std::uint32_t nodeId;      ///< which node; ids are stable across edits, indices are not
+    std::uint8_t  paramIndex;  ///< which of the node's params[]
+    std::uint8_t  interp;      ///< TrackInterp
+    std::uint8_t  keyCount;
+    std::uint8_t  _pad0;
+    float         time[kMaxKeys];
+    float         value[kMaxKeys];
+};
+static_assert(sizeof(Track) == 8 + 64 + 64);
+static_assert(std::is_trivially_copyable_v<Track>);
+
+enum class TrackInterp : std::uint8_t {
+    Linear     = 0,
+    CatmullRom = 1,   ///< through every key, C1, the tangent at a key from its neighbours
+};
+
 /// Fixed-capacity scene. The engine typedefs one instantiation as its GameMemory.
 ///
 /// Every collection carries its own count rather than sharing one at the top, so each is reported
@@ -195,6 +221,9 @@ struct SceneStorage {
     FixedArray<Light, kMaxLights>          lights;
     /// Indexed in step with nodes: entry i is the name of node i.
     FixedArray<NameSlot<NameLen>, MaxNodes> names;
+    /// Motion (D-15). Empty means a still scene, which is what every scene was before this.
+    static constexpr std::size_t kMaxTracks = 64;
+    FixedArray<Track, kMaxTracks> tracks;
 
     [[nodiscard]] std::uint32_t nodeCount() const { return nodes.count; }
     [[nodiscard]] std::uint32_t materialCount() const { return materials.count; }

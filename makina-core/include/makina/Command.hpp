@@ -96,7 +96,7 @@ inline bool buildNode(const nlohmann::json& spec, CsgNode& out, std::string& why
     out.firstChild = kNoChild;
     out.childCount = 0;
 
-    if (entry->op == Op::Rotate || isWarp(entry->op)) {
+    if (entry->op == Op::Rotate || entry->op == Op::Joint || isWarp(entry->op)) {
         const std::string axis = spec.value("axis", std::string("X"));
         out.flags |= detail::axisFromString(axis);
     }

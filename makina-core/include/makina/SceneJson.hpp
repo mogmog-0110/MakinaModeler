@@ -16,6 +16,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace makina {
 
@@ -84,7 +85,7 @@ inline void fillNode(Scene& s, std::uint16_t index, const nlohmann::json& j) {
         for (int i = 0; i < 12 && entry->keys[i] != nullptr; ++i) {
             n.params[i] = j.value(entry->keys[i], 0.0f);
         }
-        if (entry->op == Op::Rotate || isWarp(entry->op)) {
+        if (entry->op == Op::Rotate || entry->op == Op::Joint || isWarp(entry->op)) {
             n.flags |= axisFromString(j.value("axis", std::string("X")));
         }
         if (entry->op == Op::Cone && j.value("open", false)) {
@@ -332,7 +333,7 @@ inline nlohmann::ordered_json writeNode(const Scene& s, std::uint16_t index) {
     }
 
     if (entry != nullptr) {
-        if (op == Op::Rotate || isWarp(op)) {
+        if (op == Op::Rotate || op == Op::Joint || isWarp(op)) {
             j["axis"] = axisToString(n.flags);
         }
         for (int i = 0; i < 12 && entry->keys[i] != nullptr; ++i) {
@@ -440,10 +441,75 @@ inline void parseSceneInto(Scene& s, const std::string& text) {
         }
     }
 
+    // Motion (D-15): "animation" is a list of tracks, each naming a node id and a parameter by
+    // name (resolved through the op table once the tree is read, below), with keys as
+    // [time, value] pairs. Absent means still, which is what every scene was.
+    std::vector<nlohmann::json> pendingTracks;
+    if (j.contains("animation") && j["animation"].is_array()) {
+        for (const auto& tr : j["animation"]) {
+            pendingTracks.push_back(tr);
+        }
+    }
+
     if (!j.contains("root")) {
         throw SceneJsonError("scene has no \"root\"");
     }
     detail::readRoot(s, j["root"]);
+
+    for (const nlohmann::json& tr : pendingTracks) {
+        if (s.tracks.count >= Scene::kMaxTracks) {
+            throw SceneJsonError("scene exceeds the " + std::to_string(Scene::kMaxTracks) +
+                                 " track limit");
+        }
+        Track t{};
+        t.nodeId = tr.value("node", 0u);
+        const std::string param = tr.value("param", std::string());
+        // The parameter is named, not numbered, so the file reads like the property panel and
+        // survives a change of parameter order in Op.hpp. Resolved against the node's own op.
+        std::uint16_t idx = kNoChild;
+        for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
+            if (s.nodes[i].id == t.nodeId) {
+                idx = static_cast<std::uint16_t>(i);
+            }
+        }
+        if (idx == kNoChild) {
+            throw SceneJsonError("animation names node " + std::to_string(t.nodeId) +
+                                 ", which the scene does not have");
+        }
+        const OpEntry* entry = findOp(static_cast<Op>(s.nodes[idx].op));
+        int paramIndex = -1;
+        for (int k = 0; entry != nullptr && k < 12 && entry->keys[k] != nullptr; ++k) {
+            if (param == entry->keys[k]) {
+                paramIndex = k;
+            }
+        }
+        if (paramIndex < 0) {
+            throw SceneJsonError("animation names parameter '" + param + "' on a " +
+                                 (entry ? entry->name : "?") + ", which has no such parameter");
+        }
+        t.paramIndex = static_cast<std::uint8_t>(paramIndex);
+        t.interp = static_cast<std::uint8_t>(
+            tr.value("interp", std::string("linear")) == "catmullrom" ? TrackInterp::CatmullRom
+                                                                      : TrackInterp::Linear);
+        if (tr.contains("keys") && tr["keys"].is_array()) {
+            for (const auto& key : tr["keys"]) {
+                if (t.keyCount >= Track::kMaxKeys) {
+                    throw SceneJsonError("a track holds more than " +
+                                         std::to_string(Track::kMaxKeys) + " keys");
+                }
+                if (!key.is_array() || key.size() != 2) {
+                    throw SceneJsonError("a key is [time, value]");
+                }
+                t.time[t.keyCount] = key[0].get<float>();
+                t.value[t.keyCount] = key[1].get<float>();
+                if (t.keyCount > 0 && t.time[t.keyCount] < t.time[t.keyCount - 1]) {
+                    throw SceneJsonError("track keys must be in ascending time");
+                }
+                ++t.keyCount;
+            }
+        }
+        s.tracks[s.tracks.count++] = t;
+    }
 }
 
 /// By-value convenience for callers whose stack can afford one Scene: tools and tests linked
@@ -517,6 +583,35 @@ inline std::string writeScene(const Scene& s, const std::string& sourceFile = {}
             lights.push_back(detail::writeLight(s.lights[i]));
         }
         j["lights"] = std::move(lights);
+    }
+
+    if (s.tracks.count > 0) {
+        // Same rule as lights: written only when there is motion, so still scenes are unchanged.
+        nlohmann::ordered_json anim = nlohmann::ordered_json::array();
+        for (std::uint32_t k = 0; k < s.tracks.count; ++k) {
+            const Track& t = s.tracks[k];
+            const char* paramName = "?";
+            for (std::uint32_t i = 0; i < s.nodes.count; ++i) {
+                if (s.nodes[i].id == t.nodeId) {
+                    const OpEntry* entry = findOp(static_cast<Op>(s.nodes[i].op));
+                    if (entry != nullptr && t.paramIndex < 12 &&
+                        entry->keys[t.paramIndex] != nullptr) {
+                        paramName = entry->keys[t.paramIndex];
+                    }
+                }
+            }
+            nlohmann::ordered_json keys = nlohmann::ordered_json::array();
+            for (int i = 0; i < t.keyCount; ++i) {
+                keys.push_back(nlohmann::ordered_json{t.time[i], t.value[i]});
+            }
+            anim.push_back(nlohmann::ordered_json{
+                {"node", t.nodeId},
+                {"param", paramName},
+                {"interp", static_cast<TrackInterp>(t.interp) == TrackInterp::CatmullRom
+                               ? "catmullrom" : "linear"},
+                {"keys", std::move(keys)}});
+        }
+        j["animation"] = std::move(anim);
     }
 
     return j.dump(2) + "\n";
