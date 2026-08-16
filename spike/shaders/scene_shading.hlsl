@@ -121,7 +121,9 @@ float3 mkLighting(MkMaterial mat, float3 p, float3 n, float3 v, float ao, float 
         // No lights in the scene: the one the renderer has always used, unshadowed. Every scene
         // rendered this way before lights were a thing the format carried, so keeping it means
         // nothing that used to draw suddenly goes black.
-        return col + mkFinish(mat, n, -gLightDir, v, float3(1, 1, 1)) * ao;
+        // Against POV that sun is written `shadowless`, and a shadowless light casts no
+        // highlight (mkFinishLit); the modeller's own picture keeps its highlights.
+        return col + mkFinishLit(mat, n, -gLightDir, v, float3(1, 1, 1), gPovMatch == 0u) * ao;
     }
     for (uint li = 0u; li < gLightCount; ++li) {
         const MkLight lg = gLights[li];
@@ -143,7 +145,8 @@ float3 mkLighting(MkMaterial mat, float3 p, float3 n, float3 v, float ao, float 
         if (shade <= 0.0) {
             continue;
         }
-        col += mkFinish(mat, n, toLight, v, lg.color * mkFalloff(lg, reach)) * shade * ao;
+        col += mkFinishLit(mat, n, toLight, v, lg.color * mkFalloff(lg, reach),
+                           lg.shadowless == 0u) * shade * ao;
     }
     return col;
 }

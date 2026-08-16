@@ -76,7 +76,13 @@ MkMaterial mkMaterialAt(float index, uint count) {
 /// One light, POV's way.
 ///
 /// `n` and `l` are unit and both point away from the surface; `v` points back at the eye.
-float3 mkFinish(MkMaterial m, float3 n, float3 l, float3 v, float3 lightColor) {
+/// `highlights` is false for a light that casts none: POV's `shadowless` light lights the
+/// diffuse and nothing else -- measured (pov_specular_probe.py: the same plane reads its
+/// full highlight from a plain light and exactly 0 from a shadowless one). The comparison's
+/// default sun is written shadowless, which is why a highlight model could never be right
+/// against it and why the checker scene tolerated a wrong one.
+float3 mkFinishLit(MkMaterial m, float3 n, float3 l, float3 v, float3 lightColor,
+                   bool highlights) {
     const float ndl = saturate(dot(n, l));
 
     // brilliance sharpens the falloff of the diffuse term itself. At 1.0 this is plain Lambert,
@@ -88,24 +94,23 @@ float3 mkFinish(MkMaterial m, float3 n, float3 l, float3 v, float3 lightColor) {
     // the whole of POV's metal, and it is a tint, not a BRDF.
     const float3 highlight = lerp(float3(1, 1, 1), m.diffuseColor, m.metallic);
 
-    if (m.specular > 0.0 && ndl > 0.0) {
+    if (highlights && m.specular > 0.0 && ndl > 0.0) {
         const float3 h = normalize(l + v);
         const float ca = dot(n, h);
         if (ca > 0.0) {
-            // POV's specular is a Gaussian in the *angle*, not a power of the cosine:
-            //
-            //     exp(-(acos(N.H) / roughness)^2)
-            //
-            // Converting roughness to a Blinn-Phong exponent was the first attempt and it is
-            // measurably wrong. At roughness 0.6875 the power version is nearly flat across the
-            // whole surface, so it lifted every pixel: the pixel comparison put our dark checker
-            // squares at 100 where POV had 76, uniformly, on every square of one colour.
-            const float x = acos(saturate(ca)) / max(m.roughness, 1e-6);
-            col += highlight * m.specular * exp(-x * x) * lightColor;
+            // POV's specular is Blinn-Phong: (N.H)^(1/roughness), no N.L factor, dropped only
+            // when the light is behind the surface. Measured, not read: pov_specular_probe.py
+            // sweeps the light over a plane for six roughnesses and POV lands within 0.02 of
+            // this power at every angle, and 0.3-0.9 away from the Gaussian in the half-angle
+            // that stood here before. The Gaussian had been fitted on one checker scene whose
+            // specular was small enough to hide it; the arm fixture (specular 0.15, roughness
+            // 0.77) put the two renderers a mean of 12 levels apart.
+            col += highlight * m.specular * pow(saturate(ca), 1.0 / max(m.roughness, 1e-4)) *
+                   lightColor;
         }
     }
 
-    if (m.phong > 0.0 && ndl > 0.0) {
+    if (highlights && m.phong > 0.0 && ndl > 0.0) {
         // The other highlight. Reflection direction rather than half vector -- POV computes phong
         // and specular differently, and collapsing them into one would change every scene that
         // uses phong.
@@ -114,6 +119,11 @@ float3 mkFinish(MkMaterial m, float3 n, float3 l, float3 v, float3 lightColor) {
     }
 
     return col;
+}
+
+/// A light that casts highlights, which is every light but POV's shadowless one.
+float3 mkFinish(MkMaterial m, float3 n, float3 l, float3 v, float3 lightColor) {
+    return mkFinishLit(m, n, l, v, lightColor, true);
 }
 
 /// The part that does not depend on any light.
