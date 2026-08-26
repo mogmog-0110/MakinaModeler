@@ -89,7 +89,7 @@ tests/mitiru/TestMixBus.cpp(12):   fatal error C1083: 'mitiru_mml/MixBus.hpp':  
 
 ## テストゲートの実行結果（2026-08-11）
 
-`python tools/test_gate.py --build-dir build-check --config Debug`（`.claude/rules/definition-of-done.md` の関門）
+`python tools/test_gate.py --build-dir build-check --config Debug`（完了条件の関門）
 
 ```
 total 2720  passed 2697  failed 21  timeout 0  exception 0  not-run 0  skipped 2

@@ -31,10 +31,9 @@
   エラーも出さずにただ何もしない。最初に書いたときは木もプロパティも一つも束縛できて
   いなかった。tools/shell_audit.py が verify-all の中でそれを見ている。
 
-  アイコンの出どころは二つある。プリミティブとブーリアンは Grasp3D 自身のもの
-  (assets/icons/grasp3d、<img> で読む)。Grasp3D はそれ以外に Sun の Java Look and Feel
-  Graphics Repository を使っていたが、あれは Grasp3D のものではないので、汎用の操作は
-  Lucide に差し替えてある。
+  アイコンは 2 種類。プリミティブとブーリアンは自前で、この文書に直接書いている。
+  汎用の操作 (元に戻す・保存など) は Lucide。原典が使っていた Grasp3D 由来の画像は、
+  再配布できないので置いていない。
 
   Lucide のほうは <svg> のパスを**この文書に直接書いている**ので、表示義務はここで果たす:
 
@@ -219,13 +218,13 @@
     <!-- プリミティブ。Grasp3D に sphere16.gif が無いので、球だけ Lucide の circle を使う。 -->
     <button data-m-action="add.sphere"   title="球を足す">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></button>
-    <button data-m-action="add.box"      title="箱を足す"><img src="assets/icons/grasp3d/box16.gif" alt=""></button>
-    <button data-m-action="add.plane"    title="平面を足す"><img src="assets/icons/grasp3d/plane16.gif" alt=""></button>
-    <button data-m-action="add.cylinder" title="円柱を足す"><img src="assets/icons/grasp3d/cylinder16.gif" alt=""></button>
-    <button data-m-action="add.cone"     title="円錐を足す"><img src="assets/icons/grasp3d/cone16.gif" alt=""></button>
-    <button data-m-action="add.torus"    title="トーラスを足す"><img src="assets/icons/grasp3d/torus16.gif" alt=""></button>
-    <button data-m-action="add.disc"     title="円板を足す"><img src="assets/icons/grasp3d/disc16.gif" alt=""></button>
-    <button data-m-action="add.triangle" title="三角形を足す"><img src="assets/icons/grasp3d/triangle16.gif" alt=""></button>
+    <button data-m-action="add.box"      title="箱を足す"><svg viewBox="0 0 24 24"><path d="M12 3 21 7.5 12 12 3 7.5Z"/><path d="M3 7.5v9L12 21l9-4.5v-9"/><path d="M12 12v9"/></svg></button>
+    <button data-m-action="add.plane"    title="平面を足す"><svg viewBox="0 0 24 24"><path d="M2 16 9 8h13l-7 8Z"/></svg></button>
+    <button data-m-action="add.cylinder" title="円柱を足す"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12a7 3 0 0 0 14 0V6"/></svg></button>
+    <button data-m-action="add.cone"     title="円錐を足す"><svg viewBox="0 0 24 24"><path d="M12 3 19 18M12 3 5 18"/><ellipse cx="12" cy="18" rx="7" ry="3"/></svg></button>
+    <button data-m-action="add.torus"    title="トーラスを足す"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.4" ry="1.7"/></svg></button>
+    <button data-m-action="add.disc"     title="円板を足す"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="11" rx="9" ry="4"/><path d="M3 11v2a9 4 0 0 0 18 0v-2"/></svg></button>
+    <button data-m-action="add.triangle" title="三角形を足す"><svg viewBox="0 0 24 24"><path d="M12 4 21 19H3Z"/></svg></button>
 
     <span class="sep"></span>
 
@@ -248,9 +247,9 @@
 
     <span class="sep"></span>
 
-    <button data-m-action="add.intersection" title="Intersection を足す"><img src="assets/icons/grasp3d/intersection16.gif" alt=""></button>
-    <button data-m-action="add.difference"   title="Difference を足す"><img src="assets/icons/grasp3d/difference16.gif" alt=""></button>
-    <button data-m-action="add.merge"        title="Merge を足す"><img src="assets/icons/grasp3d/merge16.gif" alt=""></button>
+    <button data-m-action="add.intersection" title="Intersection を足す"><svg viewBox="0 0 24 24"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/><path d="M12 6.7a6 6 0 0 0 0 10.6"/><path d="M12 6.7a6 6 0 0 1 0 10.6"/></svg></button>
+    <button data-m-action="add.difference"   title="Difference を足す"><svg viewBox="0 0 24 24"><circle cx="9" cy="12" r="6"/><path d="M15 6.4a6 6 0 0 1 0 11.2"/><path d="M12 6.7a6 6 0 0 1 0 10.6"/></svg></button>
+    <button data-m-action="add.merge"        title="Merge を足す"><svg viewBox="0 0 24 24"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg></button>
 
     <span class="sep"></span>
 

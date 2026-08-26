@@ -1,15 +1,19 @@
 # Makina
 
-CSG ソリッドモデラー。距離場（SDF）を直接レイマーチする DX12 レンダラと、
-**形状そのものから経年変化を導出する**マテリアルを持つ。
+形を組み合わせて立体を作るモデラー。球や円柱を足したり削ったりして形を決めるところは、
+よくある 3D ソフトと変わらない。違うのは、汚れや摩耗をあとから絵で描き足さないところ。
+角が擦れて光り、窪みに埃が溜まるのを、形そのものから計算する。形を変えると、汚れも
+同じフレームで付いて回る。
 
-教育用ツール Grasp3D（Java / JOGL / POV-Ray）の C++ 移植から始まり、
-移植の一致検証をそのまま「3 通りの独立実装が同じ形を描く」証明に使っている。
+中身は、距離場 (SDF) を直接レイマーチする DirectX 12 のレンダラと、
+形を評価するヘッダーだけのライブラリ。大学の授業で使う Java 製のモデラー Grasp3D を
+C++ へ移すところから始まっていて、移植の一致検証をそのまま
+「3 通りの独立実装が同じ形を描く」証明として使っている。
 
-自作ゲームエンジン **MitiruEngine** の姉妹プロジェクト。
-ここで作ったモデルはエンジン側で描画にも衝突判定にも使える（同じ距離場から出る）。
+自作ゲームエンジン MitiruEngine の姉妹プロジェクト。ここで作った形はエンジン側で
+描画にも当たり判定にも使える。同じ距離場から両方が出るため。
 
----
+![フランジ](docs/images/flange.png)
 
 ## 1. 何が新しいのか
 
@@ -25,7 +29,7 @@ CSG ソリッドモデラー。距離場（SDF）を直接レイマーチする 
 | 埃 | 上向き × 開けている × 摩耗していない |
 | 透過 | 薄さ（内向きマーチ） |
 
-**形を変えると、同じフレームで摩耗が付いて回る。**
+形を変えると、同じフレームで摩耗が付いて回る。
 溝の半径を動かすと汚れの溜まる場所が動き、溝がボルト穴と交わればその交点に汚れが溜まる。
 ベイクしたテクスチャには言えない主張である。
 
@@ -42,7 +46,7 @@ makina_edit measure  <scene.json>     隙間・干渉・浮き・対称性
 絵しか見られないエージェントは「動かしたボスがボアを避けているか」を推測するしかない。
 `measure` を叩けるエージェントは数字を得る。
 
-巻き戻しは**厳密**。シーンは 1 個の trivially-copyable な struct なので、
+巻き戻しは厳密。シーンは 1 個の trivially-copyable な struct なので、
 スナップショットはコピーそのもので、コマンドに逆操作を持たせる必要が無い。
 
 詳細: [docs/AGENT_API.md](docs/AGENT_API.md)
@@ -56,14 +60,14 @@ makina_edit measure  <scene.json>     隙間・干渉・浮き・対称性
 | 系統 | 何を答えるか | 検証 |
 |---|---|---|
 | SDF | 表面までの距離 | Java 参照実装と 51,137 サンプル一致 |
-| B-rep（BSP） | 内か外か | SDF と **156,932 サンプル一致** |
+| B-rep（BSP） | 内か外か | SDF と 156,932 サンプル一致 |
 | レイトレ（POV-Ray） | 画素 | SDF と**シルエット IoU 0.9949〜0.9996** |
 
-**壊れ方が違う**のが要点である。
+壊れ方が違うのが要点である。
 SDF はブーリアンで「もはや距離でない数」を合成して間違え、
 B-rep は同一平面上の面でポリゴンを落として間違える。同じ間違いはしない。
 
-シルエットを比べるのは、それが**ジオメトリ・変換・カメラ・利き手だけ**に依存するから。
+シルエットを比べるのは、それがジオメトリ・変換・カメラ・利き手だけに依存するから。
 1 つの数字で 4 つを同時に検査できる。右手系のシーンを左手系で描いていれば IoU はほぼ 0 になる。
 
 ```bash
@@ -112,7 +116,7 @@ tools/           Grasp3D から参照ダンプを吐く Java ツール群、shel
 docs/            設計文書と docs/images/
 ```
 
-**依存はこの向きにしかない**: `makina-core ← MitiruEngine`、`makina-core ← Makina`。
+依存はこの向きにしかない: `makina-core ← MitiruEngine`、`makina-core ← Makina`。
 `makina-core` は標準ライブラリ以外に依存しないので、テストにデバイスもウィンドウも要らない。
 
 ---
@@ -121,18 +125,18 @@ docs/            設計文書と docs/images/
 
 | Phase | 内容 | 状態 |
 |---|---|---|
-| S | 技術検証スパイク | ✅ コード生成で 4.9 倍、インタプリタ案を棄却 |
-| 0 | 型設計・シーン記述 | ✅ |
-| 1 | makina-core | ✅ |
-| 2 | SDF レイマーチ（DX12） | ✅ |
-| 3 | アプリ（CEF）と操作性 | ✅ ビューポート・シェル・アウトライナ・変形・多選択・保存/書き出し |
-| 4 | 経年変化 | ✅ |
-| 5 | 3 系統クロスチェック | ✅ CI 化を除く |
-| 6 | エンジン統合 | ✅ 焼いた DXIL をエンジンが描き深度合成、動く立体も（D-15） |
-| 7 | AI 編集 | コア側 ✅ / ブリッジは未着手 |
+| S | 技術検証スパイク | 済 コード生成で 4.9 倍、インタプリタ案を棄却 |
+| 0 | 型設計・シーン記述 | 済 |
+| 1 | makina-core | 済 |
+| 2 | SDF レイマーチ（DX12） | 済 |
+| 3 | アプリ（CEF）と操作性 | 済 ビューポート・シェル・アウトライナ・変形・多選択・保存/書き出し |
+| 4 | 経年変化 | 済 |
+| 5 | 3 系統クロスチェック | 済 CI 化を除く |
+| 6 | エンジン統合 | 済 焼いた DXIL をエンジンが描き深度合成、動く立体も（D-15） |
+| 7 | AI 編集 | コア側 済 / ブリッジは未着手 |
 | 8 | Vulkan | 未着手 |
-| D-14 | 空間ワープ（Twist / Bend / Taper） | ✅ POV isosurface と輪郭 IoU 0.99 |
-| D-15 | 関節とモーション | ✅ Joint + キー、再生/キー打ち、live 焼きでエンジンで動く |
+| D-14 | 空間ワープ（Twist / Bend / Taper） | 済 POV isosurface と輪郭 IoU 0.99 |
+| D-15 | 関節とモーション | 済 Joint + キー、再生/キー打ち、live 焼きでエンジンで動く |
 
 ![腕が曲がる](docs/images/arm_engine.png)
 
@@ -159,7 +163,7 @@ app\build-viewport.bat
 ```
 
 ビューポートを立ち上げる（シーンは `.makina.json`。`tools\gsf2json\out\` と
-`makina-core\tests\scenes\` に一式ある）:
+`makina-core\tests\scenes\` に一式ある）。
 
 ```bash
 app\build\bin\makina_viewport.exe makina-core\tests\scenes\arm.makina.json
@@ -181,9 +185,10 @@ app\build\bin\makina_viewport.exe makina-core\tests\scenes\arm.makina.json
 makina-core\build\bin\makina_edit.exe describe makina-core\tests\scenes\arm.makina.json
 ```
 
-参照ダンプの再生成には JDK 22 と Grasp3D のビルド済みクラス（`D:\sandbox\Grasp3D\bin`）が要る。
-シルエット比較には POV-Ray（`Grasp3D\povray\bin\povray.exe`）が要る。POV-Ray のソースは
-読まない（AGPL）— licence-check.bat が門になっている。
+参照ダンプの再生成には JDK 22 と、Grasp3D のビルド済みクラスが要る。シルエット比較には
+POV-Ray が要る。どちらも同梱していないので、検証まで走らせるなら別途用意する。
+POV-Ray は外部プロセスとして呼ぶだけで、ソースは読まない。AGPL のコードが木に入ると
+プロジェクト全体が継承してしまうため、`licence-check.bat` が門になっている。
 
 ### エンジンで使う
 
@@ -199,15 +204,15 @@ spike\build\bin\makina_bake.exe scene.makina.json -o <engine>\examples\csg_solid
 ## 6. 30 秒のデモ（録画の手順）
 
 1. `app\build\bin\makina_viewport.exe makina-core\tests\scenes\arm.makina.json` を起動する。
-2. ツリーで **elbow** をクリック。プロパティに pivot と degree、degree の ◆ が塗られている（キー付き）。
-3. **Space** — 肘が 2 秒で曲げ伸ばしを繰り返す。もう一度 Space で止める。
+2. ツリーで elbow をクリック。プロパティに pivot と degree、degree の ◆ が塗られている（キー付き）。
+3. Space を押す。肘が 2 秒で曲げ伸ばしを繰り返す。もう一度 Space で止まる。
 4. スライダを 0.5 s へ。degree の欄に `-45` と打つ → その時刻にキーが増え、Space で再生すると経路が変わる。
-5. ツールバーの **Twist** を押す（選択が elbow のとき、その下に入る）。ツリーで **forearm** の行を Twist の
+5. ツールバーの Twist を押す（選択が elbow のとき、その下に入る）。ツリーで forearm の行を Twist の
    行へドラッグして中に入れ、degreesPerUnit に `60` → 前腕がねじれたまま動く。空間ごと曲げるので、
    材質も経年変化も追従する。
-6. **書き出し**ボタン → `arm.pov` / `arm.stl` / `arm.obj` がシーンの隣に出る。POV-Ray で `arm.pov` を描くと
+6. 書き出しボタン → `arm.pov` / `arm.stl` / `arm.obj` がシーンの隣に出る。POV-Ray で `arm.pov` を描くと
    同じ形が出る（これが第 3 実装との突き合わせ）。
-7. MitiruEngine 側で `mitiru_host.exe csg_solid/csg_solid.dll` — 床の上で同じ腕が動いている。
+7. MitiruEngine 側で `mitiru_host.exe csg_solid/csg_solid.dll`。床の上で同じ腕が動いている。
 
 自動で撮るなら（見た目検査の経路そのもの）:
 
@@ -218,3 +223,11 @@ app\build\bin\makina_viewport.exe makina-core\tests\scenes\arm.makina.json --sel
 ```bash
 <engine>\build\apps\mitiru_host\mitiru_host.exe csg_solid/csg_solid.dll --max-frames 130 --capture-dir out --capture-every 30
 ```
+
+---
+
+## ライセンス
+
+[LICENSE](LICENSE)（source-available）。使うことと読むことは自由、本体の改変と再配布は
+許可していない。同梱している第三者コンポーネントは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照。
+Grasp3D 自体のコードとアセットはこのリポジトリに含まれていない。
