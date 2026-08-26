@@ -90,10 +90,16 @@ public:
 
         RECT rc{0, 0, width, height};
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-        m_hwnd = CreateWindowExW(0, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                                 CW_USEDEFAULT, rc.right - rc.left, rc.bottom - rc.top, nullptr,
-                                 nullptr, wc.hInstance, this);
-        ShowWindow(m_hwnd, SW_SHOW); (void)unobtrusive;
+        // A scripted run must not take over someone's screen: keep it off the taskbar, off the
+        // desktop, and never focused. The swapchain draws regardless of visibility, so the
+        // pixels read back are the pixels a visible window would have shown.
+        const DWORD exStyle = unobtrusive ? WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE : 0;
+        const int x = unobtrusive ? -32000 : CW_USEDEFAULT;
+        const int y = unobtrusive ? -32000 : CW_USEDEFAULT;
+        m_hwnd = CreateWindowExW(exStyle, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW, x, y,
+                                 rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr,
+                                 wc.hInstance, this);
+        ShowWindow(m_hwnd, unobtrusive ? SW_HIDE : SW_SHOW);
     }
 
     ~Window() {

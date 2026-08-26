@@ -298,6 +298,11 @@ int main(int argc, char** argv) {
     // be the only evidence there is. These two turn it into a picture that can be checked.
     int         frameLimit = 0;
     std::string screenshot;
+    // One picture at the end answers "did it draw"; it cannot answer "did it move". A run that
+    // plays the timeline needs the frames in between, so this writes a numbered sequence and
+    // leaves the stitching to whatever wants a video out of it.
+    std::string captureDir;
+    int         captureEvery = 1;
     // Synthetic input, for the same reason --screenshot exists: a transform is a state machine
     // spread over several frames, and nothing automated can press G, X, 5, Enter. One key per
     // frame, because that is how the real thing arrives -- feeding them all at once would test a
@@ -329,6 +334,10 @@ int main(int argc, char** argv) {
             frameLimit = std::atoi(argv[++i]);
         } else if (a == "--screenshot" && i + 1 < argc) {
             screenshot = argv[++i];
+        } else if (a == "--capture-dir" && i + 1 < argc) {
+            captureDir = argv[++i];
+        } else if (a == "--capture-every" && i + 1 < argc) {
+            captureEvery = (std::max)(1, std::atoi(argv[++i]));
         } else if (a == "--actions" && i + 1 < argc) {
             // Action names, not keys. The toolbar dispatches "view.genuine"; it does not press
             // anything, and view.genuine has no binding in either preset because neither Maya
@@ -406,6 +415,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: makina_viewport <scene.makina.json> [--keymap maya|blender]\n"
                      "       [--frames N] [--screenshot <path>]\n"
+                     "       [--capture-dir <dir>] [--capture-every N]\n"
                      "       [--select <id>] [--keys \"W X 5 ENTER\"] [--save <path>]\n"
                      "       [--actions \"view.front view.genuine\"] [--dump-state <path>]\n"
                      "       [--no-shell] [--click <x,y>] [--dragui <x1,y1,x2,y2>]\n");
@@ -1783,6 +1793,18 @@ int main(int argc, char** argv) {
             lastFrameMs = std::chrono::duration<double, std::milli>(
                               std::chrono::steady_clock::now() - frameStart)
                               .count();
+
+            if (!captureDir.empty() && (frame % captureEvery) == 0) {
+                int w = 0, h = 0, pitch = 0;
+                const std::vector<std::uint8_t> pixels = dev.capture(w, h, pitch);
+                char name[64];
+                std::snprintf(name, sizeof(name), "/f%04d.bmp", frame / captureEvery);
+                std::string err;
+                if (!spike::writeBmp(captureDir + name, pixels.data(), w, h, pitch, err)) {
+                    std::fprintf(stderr, "warning: %s\n", err.c_str());
+                    captureDir.clear();
+                }
+            }
 
             if (frameLimit > 0 && ++frame >= frameLimit) {
                 break;
