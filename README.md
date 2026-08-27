@@ -6,4 +6,4 @@
 
 ## ライセンス
 
-[LICENSE](LICENSE)。同梱している第三者コンポーネントは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+ライセンスは [LICENSE](LICENSE) に記載した。同梱する第三者コンポーネントについては [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記載した。
